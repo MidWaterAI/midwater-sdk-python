@@ -1,0 +1,62 @@
+{
+  "note": "Signed exactly as Midwater signs deliveries: HMAC-SHA256 over `<t>.<raw body>` keyed with the whole secret string (including the whsec_ prefix). Synthetic secret; not a real credential.",
+  "secret": "whsec_testvectorsecretnotreal000000",
+  "body": "{\"id\":\"evt_a1b2c3d4e5\",\"type\":\"conversation.evaluated\",\"environment\":\"live\",\"created_at\":\"2026-10-08T21:12:00.000Z\",\"data\":{\"conversation_id\":\"cmv0187nm005po3016rag4dcg\",\"external_id\":\"call_8f2a91\",\"agent\":{\"id\":\"front-desk\",\"name\":\"Front desk\",\"health_status\":\"healthy\"},\"outcome\":\"resolved\",\"results\":[{\"check_key\":\"need_unresolved\",\"verdict\":\"pass\",\"score\":0.04,\"decided_by\":\"model\",\"shadow\":false}]}}",
+  "now": 1791493950,
+  "tolerance_seconds": 300,
+  "cases": [
+    {
+      "name": "valid",
+      "header": "t=1791493920,v1=5f1410b3599929147ad7559ca8423d05b723079614d80aa9763d17b440a899e3",
+      "valid": true
+    },
+    {
+      "name": "valid_with_rotated_second_v1",
+      "header": "t=1791493920,v1=0000000000000000000000000000000000000000000000000000000000000000,v1=5f1410b3599929147ad7559ca8423d05b723079614d80aa9763d17b440a899e3",
+      "valid": true
+    },
+    {
+      "name": "tampered_body",
+      "header": "t=1791493920,v1=5f1410b3599929147ad7559ca8423d05b723079614d80aa9763d17b440a899e3",
+      "body": "{\"id\":\"evt_a1b2c3d4e5\",\"type\":\"conversation.evaluated\",\"environment\":\"live\",\"created_at\":\"2026-10-08T21:12:00.000Z\",\"data\":{\"conversation_id\":\"cmv0187nm005po3016rag4dcg\",\"external_id\":\"call_8f2a91\",\"agent\":{\"id\":\"front-desk\",\"name\":\"Front desk\",\"health_status\":\"healthy\"},\"outcome\":\"unresolved\",\"results\":[{\"check_key\":\"need_unresolved\",\"verdict\":\"pass\",\"score\":0.04,\"decided_by\":\"model\",\"shadow\":false}]}}",
+      "valid": false,
+      "reason": "invalid_signature"
+    },
+    {
+      "name": "wrong_secret",
+      "header": "t=1791493920,v1=3140bfa84f5b9dca301ad20cac7515a2b5c5c3aa417c6ec1d53013cf6195f73d",
+      "valid": false,
+      "reason": "invalid_signature"
+    },
+    {
+      "name": "stale_timestamp",
+      "header": "t=1791492920,v1=26039813841818ae4530519e7e9ae44d299e70c5c34326a998125c71f2b5d736",
+      "valid": false,
+      "reason": "stale_timestamp"
+    },
+    {
+      "name": "future_timestamp",
+      "header": "t=1791494920,v1=bba82ca8e60fd9460a8c7f869f9e9d4fd4281ad0bde43e5dbb80483d026eb1ef",
+      "valid": false,
+      "reason": "stale_timestamp"
+    },
+    {
+      "name": "missing_header",
+      "header": null,
+      "valid": false,
+      "reason": "missing_header"
+    },
+    {
+      "name": "malformed_header",
+      "header": "v1=abc",
+      "valid": false,
+      "reason": "malformed_header"
+    },
+    {
+      "name": "non_hex_v1",
+      "header": "t=1791493920,v1=zz",
+      "valid": false,
+      "reason": "invalid_signature"
+    }
+  ]
+}

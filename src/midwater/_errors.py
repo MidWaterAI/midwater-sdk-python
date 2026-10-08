@@ -1,0 +1,127 @@
+"""Exceptions raised by the Midwater SDK.
+
+No exception message or repr ever contains the API key.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from .types import Conversation
+
+__all__ = [
+    "MidwaterError",
+    "APIError",
+    "AuthenticationError",
+    "ValidationError",
+    "NotFoundError",
+    "RateLimitError",
+    "ServerError",
+    "APIConnectionError",
+    "WaitTimeoutError",
+    "WebhookVerificationError",
+]
+
+
+class MidwaterError(Exception):
+    """Base class for every error raised by this SDK."""
+
+
+class APIError(MidwaterError):
+    """The Midwater API answered with an error (or the SDK could not use the answer).
+
+    Attributes:
+        status: The HTTP status code, or ``None`` when no request was made
+            (for example a missing API key at construction).
+        type: The stable machine-readable error type from the response
+            (``authentication_error``, ``validation_error``, ``not_found`` ...), if any.
+        message: The human-readable message.
+        fields: Validation messages keyed by dotted path (``transcript.0.speaker``);
+            empty when the response has none.
+        body: The parsed JSON error body, or the raw text when it wasn't JSON.
+    """
+
+    status: Optional[int]
+    type: Optional[str]
+    message: str
+    fields: Dict[str, List[str]]
+    body: Any
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: Optional[int] = None,
+        type: Optional[str] = None,
+        fields: Optional[Dict[str, List[str]]] = None,
+        body: Any = None,
+    ) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status = status
+        self.type = type
+        self.fields = dict(fields) if fields else {}
+        self.body = body
+
+    def __str__(self) -> str:
+        parts = []
+        if self.status is not None:
+            parts.append(f"status {self.status}")
+        if self.type:
+            parts.append(self.type)
+        suffix = f" ({', '.join(parts)})" if parts else ""
+        return f"{self.message}{suffix}"
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}(message={self.message!r}, status={self.status!r}, "
+            f"type={self.type!r})"
+        )
+
+
+class AuthenticationError(APIError):
+    """401, or no usable API key was configured."""
+
+
+class ValidationError(APIError):
+    """400 (invalid JSON) or 422 (the body doesn't match the schema). See ``.fields``."""
+
+
+class NotFoundError(APIError):
+    """404: not found in the API key's environment."""
+
+
+class RateLimitError(APIError):
+    """429: too many requests."""
+
+
+class ServerError(APIError):
+    """5xx: something went wrong on Midwater's side."""
+
+
+class APIConnectionError(MidwaterError):
+    """The request never got an HTTP answer (DNS, refused connection, timeout ...)."""
+
+
+class WaitTimeoutError(MidwaterError, TimeoutError):
+    """``conversations.wait()`` gave up before scoring finished.
+
+    ``conversation`` holds the last state that was read (``None`` if nothing was read).
+    """
+
+    def __init__(self, message: str, conversation: Optional[Conversation] = None) -> None:
+        super().__init__(message)
+        self.conversation = conversation
+
+
+class WebhookVerificationError(MidwaterError):
+    """A webhook delivery failed verification.
+
+    ``reason`` is one of ``missing_header``, ``malformed_header``, ``stale_timestamp``,
+    ``invalid_signature`` or ``no_secret``.
+    """
+
+    def __init__(self, reason: str, message: Optional[str] = None) -> None:
+        super().__init__(message or reason)
+        self.reason = reason
