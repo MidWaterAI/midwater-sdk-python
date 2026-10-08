@@ -7,7 +7,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from types import TracebackType
-from typing import Any, Dict, Optional, Type, Union
+from typing import Any, Dict, Optional, Type, TypeVar, Union
 
 import httpx
 
@@ -24,11 +24,20 @@ from .types import (
     GroupHealth,
 )
 
-__all__ = ["Midwater", "AsyncMidwater", "DEFAULT_BASE_URL"]
-
-DEFAULT_BASE_URL = _base.DEFAULT_BASE_URL
+__all__ = ["Midwater", "AsyncMidwater"]
 
 ConversationPayload = Union[ConversationCreate, Mapping[str, Any]]
+
+_Model = TypeVar("_Model", ConversationAccepted, Conversation, Feedback, AgentHealth, GroupHealth)
+
+
+def _with_request_id(model: _Model, response: httpx.Response) -> _Model:
+    model.request_id = _base.header_request_id(response)
+    return model
+
+
+def _new_idempotency_key(idempotency_key: Optional[str]) -> str:
+    return idempotency_key if idempotency_key is not None else str(uuid.uuid4())
 
 
 # Indirections so tests can replace the clock and sleeping without touching the stdlib.
@@ -42,6 +51,13 @@ async def _async_sleep(seconds: float) -> None:
 
 def _monotonic() -> float:
     return time.monotonic()
+
+
+# Feedback is never retried, not even after a 429 or a network error. The API asks for an
+# Idempotency-Key on every POST, so the SDK sends one, but de-duplicating feedback by that key
+# is still planned on the server (x-status: planned on this endpoint). Until the server honours
+# it, a retry could store the same label twice. Flip this once it does.
+_FEEDBACK_RETRYABLE = False
 
 
 def _feedback_body(check_key: str, verdict: FeedbackValue, note: Optional[str]) -> FeedbackCreate:
@@ -118,19 +134,20 @@ class Conversations:
         retries can never store the conversation twice. Pass your own (for example your
         ``external_id``) to make retries across processes safe too.
         """
-        key = idempotency_key if idempotency_key is not None else str(uuid.uuid4())
+        key = _new_idempotency_key(idempotency_key)
         response = self._client._request(
             "POST", "/v1/conversations", body=conversation, idempotency_key=key, retryable=True
         )
-        return ConversationAccepted.from_dict(
+        accepted = ConversationAccepted.from_dict(
             _base.parse_json(response), replayed=_base.is_replayed(response), idempotency_key=key
         )
+        return _with_request_id(accepted, response)
 
     def get(self, id: str) -> Conversation:
         """Get a conversation by Midwater's ID or your ``external_id``."""
         path = f"/v1/conversations/{_base.path_segment(id)}"
         response = self._client._request("GET", path, retryable=True)
-        return Conversation.from_dict(_base.parse_json(response))
+        return _with_request_id(Conversation.from_dict(_base.parse_json(response)), response)
 
     def wait(self, id: str, timeout: float = 60.0, interval: float = 1.0) -> Conversation:
         """Poll ``get()`` until ``status`` is ``done`` or ``failed``.
@@ -155,16 +172,22 @@ class Conversations:
         check_key: str,
         verdict: FeedbackValue,
         note: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Feedback:
         """Confirm (``pass``) or correct (``fail``) one check's result on one conversation.
 
-        Each call adds a label, so the SDK does not retry this request on server errors.
+        Every POST carries an ``Idempotency-Key`` (a generated UUID4 unless you pass one).
+        The SDK never retries this call; see ``_FEEDBACK_RETRYABLE``.
         """
         path = f"/v1/conversations/{_base.path_segment(id)}/feedback"
         response = self._client._request(
-            "POST", path, body=_feedback_body(check_key, verdict, note), retryable=False
+            "POST",
+            path,
+            body=_feedback_body(check_key, verdict, note),
+            idempotency_key=_new_idempotency_key(idempotency_key),
+            retryable=_FEEDBACK_RETRYABLE,
         )
-        return Feedback.from_dict(_base.parse_json(response))
+        return _with_request_id(Feedback.from_dict(_base.parse_json(response)), response)
 
 
 class Agents:
@@ -176,9 +199,8 @@ class Agents:
     def health(self, agent_id: str) -> AgentHealth:
         """The agent's health in the API key's environment, with 7- and 30-day windows."""
         path = f"/v1/agents/{_base.path_segment(agent_id)}/health"
-        return AgentHealth.from_dict(
-            _base.parse_json(self._client._request("GET", path, retryable=True))
-        )
+        response = self._client._request("GET", path, retryable=True)
+        return _with_request_id(AgentHealth.from_dict(_base.parse_json(response)), response)
 
 
 class Groups:
@@ -190,17 +212,18 @@ class Groups:
     def health(self, group_id: str) -> GroupHealth:
         """The group's health: the worst status among its active agents, and totals."""
         path = f"/v1/groups/{_base.path_segment(group_id)}/health"
-        return GroupHealth.from_dict(
-            _base.parse_json(self._client._request("GET", path, retryable=True))
-        )
+        response = self._client._request("GET", path, retryable=True)
+        return _with_request_id(GroupHealth.from_dict(_base.parse_json(response)), response)
 
 
 class Midwater(_ClientConfig):
     """Synchronous Midwater API client.
 
-    ``api_key`` defaults to ``MIDWATER_API_KEY``; ``base_url`` to ``MIDWATER_BASE_URL``, then
-    ``DEFAULT_BASE_URL``. Pass ``http_client`` to use your own ``httpx.Client`` (proxies,
-    custom transports); the SDK won't close a client you pass in.
+    ``api_key`` and ``base_url`` are required: pass them, or set ``MIDWATER_API_KEY`` and
+    ``MIDWATER_BASE_URL`` (the base URL for your Midwater environment; there is no default
+    host). ``max_retries`` (default 2) is clamped to at most 3. Pass ``http_client`` to use
+    your own ``httpx.Client`` (proxies, custom transports); the SDK won't close a client you
+    pass in.
     """
 
     def __init__(
@@ -281,19 +304,20 @@ class AsyncConversations:
         self, conversation: ConversationPayload, idempotency_key: Optional[str] = None
     ) -> ConversationAccepted:
         """Send a finished conversation. See ``Midwater.conversations.create``."""
-        key = idempotency_key if idempotency_key is not None else str(uuid.uuid4())
+        key = _new_idempotency_key(idempotency_key)
         response = await self._client._request(
             "POST", "/v1/conversations", body=conversation, idempotency_key=key, retryable=True
         )
-        return ConversationAccepted.from_dict(
+        accepted = ConversationAccepted.from_dict(
             _base.parse_json(response), replayed=_base.is_replayed(response), idempotency_key=key
         )
+        return _with_request_id(accepted, response)
 
     async def get(self, id: str) -> Conversation:
         """Get a conversation by Midwater's ID or your ``external_id``."""
         path = f"/v1/conversations/{_base.path_segment(id)}"
         response = await self._client._request("GET", path, retryable=True)
-        return Conversation.from_dict(_base.parse_json(response))
+        return _with_request_id(Conversation.from_dict(_base.parse_json(response)), response)
 
     async def wait(self, id: str, timeout: float = 60.0, interval: float = 1.0) -> Conversation:
         """Poll ``get()`` until ``status`` is ``done`` or ``failed``; see the sync client."""
@@ -315,13 +339,18 @@ class AsyncConversations:
         check_key: str,
         verdict: FeedbackValue,
         note: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Feedback:
-        """Confirm or correct one check's result. Not retried on server errors."""
+        """Confirm or correct one check's result. Sends an ``Idempotency-Key``; never retried."""
         path = f"/v1/conversations/{_base.path_segment(id)}/feedback"
         response = await self._client._request(
-            "POST", path, body=_feedback_body(check_key, verdict, note), retryable=False
+            "POST",
+            path,
+            body=_feedback_body(check_key, verdict, note),
+            idempotency_key=_new_idempotency_key(idempotency_key),
+            retryable=_FEEDBACK_RETRYABLE,
         )
-        return Feedback.from_dict(_base.parse_json(response))
+        return _with_request_id(Feedback.from_dict(_base.parse_json(response)), response)
 
 
 class AsyncAgents:
@@ -332,7 +361,7 @@ class AsyncAgents:
         """The agent's health in the API key's environment."""
         path = f"/v1/agents/{_base.path_segment(agent_id)}/health"
         response = await self._client._request("GET", path, retryable=True)
-        return AgentHealth.from_dict(_base.parse_json(response))
+        return _with_request_id(AgentHealth.from_dict(_base.parse_json(response)), response)
 
 
 class AsyncGroups:
@@ -343,7 +372,7 @@ class AsyncGroups:
         """The group's health in the API key's environment."""
         path = f"/v1/groups/{_base.path_segment(group_id)}/health"
         response = await self._client._request("GET", path, retryable=True)
-        return GroupHealth.from_dict(_base.parse_json(response))
+        return _with_request_id(GroupHealth.from_dict(_base.parse_json(response)), response)
 
 
 class AsyncMidwater(_ClientConfig):

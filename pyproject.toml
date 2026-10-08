@@ -28,7 +28,14 @@ classifiers = [
 dependencies = ["httpx>=0.25,<1"]
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "pytest-asyncio>=0.21", "mypy>=1.5", "ruff>=0.4", "build>=1.0"]
+dev = [
+    "pytest>=7",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4",
+    "mypy>=1.5",
+    "ruff>=0.4",
+    "build>=1.0",
+]
 
 [project.urls]
 Homepage = "https://midwater.ai"
@@ -44,6 +51,7 @@ include = [
     "src/midwater",
     "tests",
     "openapi",
+    "fixtures",
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
@@ -55,6 +63,16 @@ testpaths = ["tests"]
 addopts = "-m \"not contract\""
 markers = ["contract: live tests against a running Midwater stack (opt in with -m contract)"]
 asyncio_mode = "auto"
+
+# Coverage gate for the unit run (not the contract run):
+#   pytest --cov=midwater --cov-report=term-missing --cov-fail-under=90
+[tool.coverage.run]
+branch = true
+source = ["midwater"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 90
 
 [tool.mypy]
 strict = true

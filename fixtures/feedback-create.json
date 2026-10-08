@@ -1,0 +1,5 @@
+{
+  "check_key": "need_unresolved",
+  "verdict": "fail",
+  "note": "Caller hung up before the booking went through."
+}

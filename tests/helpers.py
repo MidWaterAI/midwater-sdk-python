@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -10,56 +12,34 @@ import httpx
 API_KEY = "mw_test_" + "a" * 32
 BASE_URL = "https://midwater.example"
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+FIXTURES_DIR = REPO_ROOT / "fixtures"
+
+_cache: Dict[str, Any] = {}
+
+
+def fixture(name: str) -> Any:
+    """A deep copy of ``fixtures/<name>`` (the shared fixture set; never edit those files)."""
+    if name not in _cache:
+        _cache[name] = json.loads((FIXTURES_DIR / name).read_text(encoding="utf-8"))
+    return copy.deepcopy(_cache[name])
+
 
 def conversation_json(status: str = "done", **overrides: Any) -> Dict[str, Any]:
-    data: Dict[str, Any] = {
-        "id": "cmv0187nm005po3016rag4dcg",
-        "external_id": "call_8f2a91",
-        "channel": "voice",
-        "status": status,
-        "outcome": "resolved" if status == "done" else None,
-        "dashboard_url": "https://app.midwater.example/c/cmv0187nm005po3016rag4dcg",
-        "started_at": "2026-10-05T14:02:11Z",
-        "ended_at": "2026-10-05T14:06:40Z",
-        "ended_by": "caller",
-        "agent": {"id": "front-desk", "name": "Front desk", "version": "1.0.0"},
-        "group": None,
-        "transcript": [{"speaker": "agent", "text": "Hello"}],
-        "events": [{"type": "tool_call", "name": "reschedule_appointment", "status": "success"}],
-        "metadata": {"language": "en"},
-        "results": []
-        if status != "done"
-        else [
-            {
-                "check_key": "need_unresolved",
-                "check_name": "Need unresolved",
-                "check_version": 3,
-                "check_status": "active",
-                "score": 0.04,
-                "verdict": "pass",
-                "choice": None,
-                "decided_by": "model",
-                "reason": "The appointment was moved.",
-                "evidence_turns": [],
-                "scorer_version": "2026-10-06.3",
-                "latency_ms": 812,
-            }
-        ],
-    }
+    """``fixtures/conversation.json``, with ``status`` (and results) adjusted for polling tests."""
+    data: Dict[str, Any] = fixture("conversation.json")
+    data["status"] = status
+    if status != "done":
+        data["outcome"] = None
+        data["results"] = []
     data.update(overrides)
     return data
 
 
-def window_json() -> Dict[str, Any]:
-    return {
-        "conversations": 3,
-        "with_outcome": 2,
-        "resolution_rate": 0.5,
-        "handed_to_person_rate": None,
-        "requests_for_person_not_honored": 0,
-        "avg_frustration": 0.1,
-        "compliance_failures": 0,
-    }
+def error_json(error_type: str) -> Dict[str, Any]:
+    """The body of one entry in ``fixtures/errors.json``."""
+    body: Dict[str, Any] = fixture("errors.json")[error_type]["body"]
+    return body
 
 
 class Recorder:

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Midwater API
-  version: "2026-10-08"
+  version: "v1"
   summary: Send each finished AI-agent conversation to Midwater and read back its outcome, check results and agent health.
   description: |
     Midwater checks every conversation your AI agents have, voice calls and chats. Send each finished
@@ -9,23 +9,32 @@ info:
     the result of every check, and each agent's health.
 
     **Authentication.** Every request carries `Authorization: Bearer <key>`. A key belongs to one environment
-    of one project: test keys start `mw_test_`, live keys `mw_live_`. Keys made before October 2026 start
-    `vk_test_` / `vk_live_` and keep working. Everything you send and read is scoped to the key's environment.
+    of one project: test keys start `mw_test_`, live keys `mw_live_`. Keys made before October 2026 start `vk_` and still work.
 
-    **Errors.** Every JSON error has the shape `{ "error": { "type", "message", "fields"? } }`.
+    **Base URL.** A variable: use the base URL for your Midwater environment. There is no default host.
 
-    This document is the contract the Midwater SDKs are built from. Each operation is marked with
-    `x-midwater-verified`: the date it was last checked against a running Midwater stack.
+    **Versioning.** The version is in the path (`/v1`). Adding fields, endpoints, event types or enum values
+    doesn't change the version, so accept values you don't recognise. A breaking change gets `/v2`, with at
+    least 6 months of overlap.
+
+    **Errors.** Every error is JSON: `{ "error": { "type", "message", "fields"?, "request_id" } }`, with a fixed
+    list of types and status codes. Treat an unknown type by its status class.
+
+    **Pagination.** None in v1. When list endpoints arrive they are cursor-based: `limit` and `cursor` in,
+    `{ "data", "next_cursor" }` out.
+
+    **Planned behaviour.** Anything marked `x-status: planned` is agreed but not yet built. Don't rely on it yet.
+    Each operation's `x-midwater-verified` is the date it was last checked against a running Midwater stack.
   contact:
     name: Midwater
     email: hello@midwater.ai
 servers:
   - url: "{baseUrl}"
-    description: Your Midwater API base URL.
+    description: The base URL for your Midwater environment. A variable everywhere; no default host until launch.
     variables:
       baseUrl:
-        default: https://api.midwater.ai
-        description: Placeholder until deployment. Local stacks use http://localhost:3200.
+        default: MIDWATER_BASE_URL
+        description: Set to your Midwater base URL (the docs and SDKs read it from MIDWATER_BASE_URL).
 security:
   - apiKey: []
 tags:
@@ -47,8 +56,7 @@ paths:
         conversation and `duplicate: true`; nothing new is created.
 
         Send an `Idempotency-Key` header to make retries safe: a repeated key in the same environment
-        answers with the first response and the header `Idempotent-Replayed: true`. The replay does not
-        compare bodies, so use a new key for a different conversation.
+        answers with the first response and `Idempotent-Replayed: true`.
 
         A conversation without `agent.id` goes to the project's Default agent (ID `default`). A new
         `agent.id` creates the agent the first time it's seen.
@@ -61,28 +69,14 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ConversationCreate"
-            example:
-              external_id: call_8f2a91
-              channel: voice
-              started_at: "2026-10-05T14:02:11Z"
-              ended_at: "2026-10-05T14:06:40Z"
-              ended_by: caller
-              agent: { id: front-desk, name: Front desk, version: "1.0.0" }
-              transcript:
-                - { speaker: agent, text: "Thanks for calling, this call may be recorded. How can I help?", start_ms: 0, end_ms: 2400 }
-                - { speaker: user, text: "I need to move my appointment to Thursday.", start_ms: 2900, end_ms: 5100, asr_confidence: 0.93 }
-                - { speaker: agent, text: "Sure, I have Thursday at 10 AM. Does that work?", start_ms: 5600, end_ms: 8200 }
-                - { speaker: user, text: "Yes, that is perfect.", start_ms: 8700, end_ms: 9900, asr_confidence: 0.96 }
-                - { speaker: agent, text: "Great, you are all set for Thursday at 10 AM.", start_ms: 61500, end_ms: 64000 }
-              events:
-                - { type: tool_call, name: reschedule_appointment, status: success, at_ms: 61000 }
-              metadata: { language: en }
+            examples:
+              default: { $ref: "#/components/examples/ConversationCreate" }
       responses:
         "202":
           description: Accepted and queued for scoring.
           headers:
-            Idempotent-Replayed:
-              $ref: "#/components/headers/IdempotentReplayed"
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+            Midwater-Request-Id: { $ref: "#/components/headers/RequestId" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ConversationAccepted" }
@@ -90,16 +84,21 @@ paths:
         "200":
           description: A conversation with this `external_id` already exists in this environment; it is returned instead of a duplicate.
           headers:
-            Idempotent-Replayed:
-              $ref: "#/components/headers/IdempotentReplayed"
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+            Midwater-Request-Id: { $ref: "#/components/headers/RequestId" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ConversationAccepted" }
               example: { id: cmv0187nm005po3016rag4dcg, status: done, duplicate: true }
         "400": { $ref: "#/components/responses/InvalidJson" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
+        "409": { $ref: "#/components/responses/IdempotencyConflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/ServerError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/conversations/{id}:
     get:
       tags: [Conversations]
@@ -114,12 +113,19 @@ paths:
       responses:
         "200":
           description: The conversation.
+          headers:
+            Midwater-Request-Id: { $ref: "#/components/headers/RequestId" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Conversation" }
+              examples:
+                default: { $ref: "#/components/examples/Conversation" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/ServerError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/conversations/{id}/feedback:
     post:
       tags: [Conversations]
@@ -127,10 +133,12 @@ paths:
       summary: Confirm or correct a check result
       description: |
         Records your team's answer for one check on one conversation (stored as a label with source `api`).
-        `id` is Midwater's ID or your `external_id`. Each call adds a label; it isn't idempotent.
+        `id` is Midwater's ID or your `external_id`. Today each call adds a label; idempotency keys on this
+        endpoint are planned.
       x-midwater-verified: "2026-10-08"
       parameters:
         - $ref: "#/components/parameters/ConversationId"
+        - $ref: "#/components/parameters/IdempotencyKeyPlanned"
       requestBody:
         required: true
         content:
@@ -140,33 +148,26 @@ paths:
       responses:
         "200":
           description: The label was stored.
+          headers:
+            Midwater-Request-Id: { $ref: "#/components/headers/RequestId" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Feedback" }
+              example: { id: cmv0189as006no301jmgcwibw, check_key: need_unresolved, verdict: fail, source: api }
         "400": { $ref: "#/components/responses/InvalidJson" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
         "404":
           description: No such conversation, or the conversation has no result for `check_key` (`"No result for check <key>"`).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { type: not_found, message: No result for check no_such_check } }
+        "409": { $ref: "#/components/responses/IdempotencyConflict" }
         "422": { $ref: "#/components/responses/ValidationError" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/ServerError" }
-  /v1/conversations/{id}/turns:
-    post:
-      tags: [Conversations]
-      operationId: streamTurns
-      summary: Stream turns (not available yet)
-      description: Real-time turn streaming is not available yet and always answers `501`. Send one request per finished conversation to `POST /v1/conversations`.
-      x-midwater-verified: "2026-10-08"
-      parameters:
-        - $ref: "#/components/parameters/ConversationId"
-      responses:
-        "501":
-          description: Not implemented.
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/agents/{agent_id}/health:
     get:
       tags: [Health]
@@ -182,12 +183,19 @@ paths:
       responses:
         "200":
           description: The agent's health.
+          headers:
+            Midwater-Request-Id: { $ref: "#/components/headers/RequestId" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AgentHealth" }
+              examples:
+                default: { $ref: "#/components/examples/AgentHealth" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/ServerError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
   /v1/groups/{group_id}/health:
     get:
       tags: [Health]
@@ -203,17 +211,31 @@ paths:
       responses:
         "200":
           description: The group's health.
+          headers:
+            Midwater-Request-Id: { $ref: "#/components/headers/RequestId" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/GroupHealth" }
+              examples:
+                default: { $ref: "#/components/examples/GroupHealth" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/ServerError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+x-midwater-webhook-delivery:
+  description: How deliveries are retried. Integrators dedupe on `Midwater-Delivery`.
+  current: "Any 2xx within 5 seconds is delivered. Otherwise 3 retries, about 2, 8 and 30 seconds after the first attempt, then the delivery is marked failed."
+  planned:
+    x-status: planned
+    description: "8 attempts over about 24 hours, with exponential backoff."
 webhooks:
   conversation.evaluated:
     post:
+      operationId: webhookConversationEvaluated
       summary: A conversation was scored
-      description: Sent to webhook destinations subscribed to `conversation.evaluated` when scoring finishes.
+      description: Sent to webhook destinations when scoring finishes.
       parameters: &webhookHeaders
         - $ref: "#/components/parameters/MidwaterSignature"
         - $ref: "#/components/parameters/MidwaterEvent"
@@ -228,9 +250,10 @@ webhooks:
                     type: { const: conversation.evaluated }
                     data: { $ref: "#/components/schemas/ConversationEvaluatedData" }
       responses: &webhookResponses
-        "2XX": { description: "Any 2xx marks the delivery as delivered. Anything else, or no answer within 5 seconds, is retried." }
+        "2XX": { description: "Any 2xx within 5 seconds marks the delivery as delivered. Anything else, or no answer in time, is retried: today 3 retries about 2, 8 and 30 seconds apart; planned: 8 attempts over about 24 hours." }
   check.failed:
     post:
+      operationId: webhookCheckFailed
       summary: A check failed
       description: Sent by a route (Routes & destinations in the app) when an active check matching the route fails on a covered agent.
       parameters: *webhookHeaders
@@ -246,6 +269,7 @@ webhooks:
       responses: *webhookResponses
   check.failed.digest:
     post:
+      operationId: webhookCheckFailedDigest
       summary: Hourly digest of failed checks
       description: Sent instead of individual `check.failed` events by a route set to deliver as an hourly digest.
       parameters: *webhookHeaders
@@ -266,6 +290,7 @@ webhooks:
       responses: *webhookResponses
   agent.health_changed:
     post:
+      operationId: webhookAgentHealthChanged
       summary: An agent's health changed
       description: Sent when an agent's status changes and `watch` or `at_risk` is the old or new status. Becoming measured as healthy, or going quiet, sends nothing.
       parameters: *webhookHeaders
@@ -281,6 +306,7 @@ webhooks:
       responses: *webhookResponses
   group.health_changed:
     post:
+      operationId: webhookGroupHealthChanged
       summary: A group's health changed
       description: Sent when a group's status changes and `watch` or `at_risk` is the old or new status.
       parameters: *webhookHeaders
@@ -296,6 +322,7 @@ webhooks:
       responses: *webhookResponses
   test:
     post:
+      operationId: webhookTest
       summary: Test event
       description: Sent when someone presses "Send test event" on a destination in the app.
       parameters: *webhookHeaders
@@ -319,14 +346,26 @@ components:
     apiKey:
       type: http
       scheme: bearer
-      description: "An API key: `mw_test_…` for the test environment, `mw_live_…` for live. Older `vk_test_…` / `vk_live_…` keys also work."
+      description: "An API key: `mw_test_…` for the test environment, `mw_live_…` for live."
   parameters:
     IdempotencyKey:
       name: Idempotency-Key
       in: header
       required: false
-      description: Any string unique to this conversation, for example your `external_id`. A repeated key in the same environment answers with the first response; bodies aren't compared.
-      schema: { type: string }
+      description: |
+        Any string unique to this request, for example your `external_id`. A repeated key in the same environment
+        answers with the first response and `Idempotent-Replayed: true`. Planned (`x-status: planned`): keys
+        expire after 24 hours, and reusing a key with a different body answers `409 idempotency_conflict`.
+        Today keys don't expire and bodies aren't compared.
+      x-planned: "24-hour expiry; 409 idempotency_conflict on a different body"
+      schema: { type: string, maxLength: 255 }
+    IdempotencyKeyPlanned:
+      name: Idempotency-Key
+      in: header
+      required: false
+      x-status: planned
+      description: Planned for every `POST`. Accepted today but not yet honoured on this endpoint, so don't retry it blindly.
+      schema: { type: string, maxLength: 255 }
     ConversationId:
       name: id
       in: path
@@ -337,24 +376,44 @@ components:
       name: Midwater-Signature
       in: header
       required: true
-      description: "`t=<unix seconds>,v1=<hex>`: HMAC-SHA256 of `<t>.<raw body>` keyed with the environment's signing secret (`whsec_…`). Also sent as `Verdict-Signature` with the same value until launch."
-      schema: { type: string, example: "t=1791493925,v1=5f0c…" }
+      description: "`t=<unix seconds>,v1=<hex>`: HMAC-SHA256 of `<t>.<raw body>` keyed with the environment's signing secret (`whsec_…`). Verify with a 5-minute tolerance and a constant-time compare, and accept the delivery if any `v1=` value matches."
+      schema: { type: string, example: "t=1791493920,v1=5f1410b3599929147ad7559ca8423d05b723079614d80aa9763d17b440a899e3" }
     MidwaterEvent:
       name: Midwater-Event
       in: header
       required: true
-      description: The event type, the same as the body's `type`. Also sent as `Verdict-Event` until launch.
+      description: The event type, the same as the body's `type`.
       schema: { type: string }
     MidwaterDelivery:
       name: Midwater-Delivery
       in: header
       required: true
-      description: The delivery ID; the same on every retry of one delivery. Also sent as `Verdict-Delivery` until launch.
+      description: The delivery ID; the same on every retry of one delivery. Deduplicate on it.
       schema: { type: string }
   headers:
     IdempotentReplayed:
       description: "`true` when this response is a replay of an earlier request with the same `Idempotency-Key`."
       schema: { type: string, enum: ["true"] }
+    RequestId:
+      description: The request's ID, also in error bodies as `error.request_id`. Quote it when contacting support.
+      x-status: planned
+      schema: { type: string, example: req_8Jx2kQ4mT9 }
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      x-status: planned
+      schema: { type: integer, minimum: 0 }
+    RateLimitLimit:
+      description: Requests allowed in the current window. The numbers are published when the limits are set.
+      x-status: planned
+      schema: { type: integer }
+    RateLimitRemaining:
+      description: Requests left in the current window.
+      x-status: planned
+      schema: { type: integer }
+    RateLimitReset:
+      description: Seconds until the window resets.
+      x-status: planned
+      schema: { type: integer }
   responses:
     Unauthorized:
       description: Missing, malformed, unknown or revoked API key.
@@ -362,6 +421,13 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { type: authentication_error, message: "Missing or invalid API key. Use Authorization: Bearer mw_test_… or mw_live_…" } }
+    PermissionDenied:
+      description: The key is valid but not allowed to do this.
+      x-status: planned
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { type: permission_denied, message: This key can't do that, request_id: req_8Jx2kQ4mT9 } }
     InvalidJson:
       description: The body isn't valid JSON.
       content:
@@ -386,12 +452,123 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { type: not_found, message: Conversation not found } }
+    IdempotencyConflict:
+      description: The `Idempotency-Key` was already used with a different body.
+      x-status: planned
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { type: idempotency_conflict, message: This Idempotency-Key was used with a different body, request_id: req_8Jx2kQ4mT9 } }
+    PayloadTooLarge:
+      description: The body is larger than the limit. The limit is published when it's set.
+      x-status: planned
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { type: payload_too_large, message: The request body is too large, request_id: req_8Jx2kQ4mT9 } }
+    RateLimited:
+      description: Too many requests. Wait `Retry-After` seconds. The limits are published when they're set.
+      x-status: planned
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+        RateLimit-Limit: { $ref: "#/components/headers/RateLimitLimit" }
+        RateLimit-Remaining: { $ref: "#/components/headers/RateLimitRemaining" }
+        RateLimit-Reset: { $ref: "#/components/headers/RateLimitReset" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { type: rate_limited, message: Too many requests, request_id: req_8Jx2kQ4mT9 } }
     ServerError:
       description: Something went wrong on Midwater's side. Safe to retry with the same `Idempotency-Key`.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { type: server_error, message: Something went wrong on our side } }
+    ServiceUnavailable:
+      description: Midwater is briefly unavailable. Retry with backoff, honouring `Retry-After` when present.
+      x-status: planned
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { type: service_unavailable, message: Midwater is briefly unavailable, request_id: req_8Jx2kQ4mT9 } }
+  examples:
+    ConversationCreate:
+      summary: A finished voice call
+      value:
+        external_id: call_8f2a91
+        channel: voice
+        started_at: "2026-10-05T14:02:11Z"
+        ended_at: "2026-10-05T14:06:40Z"
+        ended_by: caller
+        agent: { id: front-desk, name: Front desk, version: "1.0.0" }
+        transcript:
+          - { speaker: agent, text: "Thanks for calling, this call may be recorded. How can I help?", start_ms: 0, end_ms: 2400 }
+          - { speaker: user, text: "I need to move my appointment to Thursday.", start_ms: 2900, end_ms: 5100, asr_confidence: 0.93 }
+          - { speaker: agent, text: "Sure, I have Thursday at 10 AM. Does that work?", start_ms: 5600, end_ms: 8200 }
+          - { speaker: user, text: "Yes, that is perfect.", start_ms: 8700, end_ms: 9900, asr_confidence: 0.96 }
+          - { speaker: agent, text: "Great, you are all set for Thursday at 10 AM.", start_ms: 61500, end_ms: 64000 }
+        events:
+          - { type: tool_call, name: reschedule_appointment, status: success, at_ms: 61000 }
+        metadata: { language: en }
+    Conversation:
+      summary: A scored conversation
+      value:
+        id: cmv0187nm005po3016rag4dcg
+        external_id: call_8f2a91
+        channel: voice
+        status: done
+        outcome: resolved
+        dashboard_url: "https://app.example/conversations/cmv0187nm005po3016rag4dcg"
+        started_at: "2026-10-05T14:02:11.000Z"
+        ended_at: "2026-10-05T14:06:40.000Z"
+        ended_by: caller
+        agent: { id: front-desk, name: Front desk, version: "1.0.0" }
+        group: null
+        transcript:
+          - { speaker: agent, text: "Thanks for calling, this call may be recorded. How can I help?" }
+          - { speaker: user, text: "I need to move my appointment to Thursday.", asr_confidence: 0.93 }
+        events:
+          - { type: tool_call, name: reschedule_appointment, status: success, at_ms: 61000 }
+        metadata: { language: en }
+        results:
+          - check_key: appointment_not_completed
+            check_name: Appointment request not completed
+            check_version: 1
+            check_status: active
+            score: 0
+            verdict: pass
+            choice: null
+            decided_by: rule
+            reason: A booking tool call succeeded.
+            evidence_turns: []
+            scorer_version: "2026-10-01.1"
+            latency_ms: 0
+    AgentHealth:
+      summary: An agent on Watch
+      value:
+        agent_id: front-desk
+        name: Front desk
+        environment: live
+        health_status: watch
+        reason: "Resolution 81% vs 87% 30-day baseline (−6 pts) since version 3.2.0"
+        group: { id: brightsmile-dental, name: BrightSmile Dental }
+        last_7_days: { conversations: 212, with_outcome: 180, resolution_rate: 0.81, handed_to_person_rate: 0.09, requests_for_person_not_honored: 2, avg_frustration: 0.22, compliance_failures: 0 }
+        last_30_days: { conversations: 905, with_outcome: 774, resolution_rate: 0.87, handed_to_person_rate: 0.08, requests_for_person_not_honored: 5, avg_frustration: 0.19, compliance_failures: 1 }
+    GroupHealth:
+      summary: A group set by its worst agent
+      value:
+        group_id: brightsmile-dental
+        name: BrightSmile Dental
+        environment: live
+        health_status: watch
+        reason: "Front desk: resolution 81% vs 87% 30-day baseline (−6 pts) since version 3.2.0"
+        agents:
+          - { id: front-desk, name: Front desk, health_status: watch }
+          - { id: after-hours, name: After hours, health_status: healthy }
+        last_7_days: { conversations: 301, with_outcome: 255, resolution_rate: 0.83, handed_to_person_rate: 0.08, requests_for_person_not_honored: 2, avg_frustration: 0.21, compliance_failures: 0 }
+        last_30_days: { conversations: 1270, with_outcome: 1088, resolution_rate: 0.87, handed_to_person_rate: 0.08, requests_for_person_not_honored: 6, avg_frustration: 0.19, compliance_failures: 1 }
   schemas:
     Error:
       type: object
@@ -403,14 +580,22 @@ components:
           properties:
             type:
               type: string
-              description: Stable machine-readable error type.
-              enum: [authentication_error, invalid_json, validation_error, not_found, server_error, not_implemented]
+              description: |
+                Stable machine-readable type. Each has a set status: `invalid_json` 400, `authentication_error` 401,
+                `permission_denied` 403, `not_found` 404, `idempotency_conflict` 409, `payload_too_large` 413,
+                `validation_error` 422, `rate_limited` 429, `server_error` 500, `service_unavailable` 503.
+                Types not yet returned are planned. Treat a type you don't know by its status class.
+              enum: [invalid_json, authentication_error, permission_denied, not_found, idempotency_conflict, payload_too_large, validation_error, rate_limited, server_error, service_unavailable]
+              x-planned-values: [permission_denied, idempotency_conflict, payload_too_large, rate_limited, service_unavailable]
             message: { type: string, description: Human-readable; may change. }
             fields:
               type: object
               description: "Validation errors by dotted path, e.g. `transcript.0.speaker`. `_root` for the body as a whole."
               additionalProperties: { type: array, items: { type: string } }
-            docs: { type: string, description: A link to more information (only on `not_implemented`). }
+            request_id:
+              type: string
+              x-status: planned
+              description: The request's ID, the same as the `Midwater-Request-Id` header.
     SafeId:
       type: string
       description: "A letter or digit, then up to 127 letters, digits, `.`, `_`, `:` or `-`. No `/`, so IDs never need URL-encoding."

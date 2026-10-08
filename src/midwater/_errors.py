@@ -14,10 +14,15 @@ __all__ = [
     "MidwaterError",
     "APIError",
     "AuthenticationError",
+    "PermissionDeniedError",
     "ValidationError",
     "NotFoundError",
+    "RequestTimeoutError",
+    "IdempotencyConflictError",
+    "PayloadTooLargeError",
     "RateLimitError",
     "ServerError",
+    "ServiceUnavailableError",
     "APIConnectionError",
     "WaitTimeoutError",
     "WebhookVerificationError",
@@ -34,12 +39,17 @@ class APIError(MidwaterError):
     Attributes:
         status: The HTTP status code, or ``None`` when no request was made
             (for example a missing API key at construction).
-        type: The stable machine-readable error type from the response
-            (``authentication_error``, ``validation_error``, ``not_found`` ...), if any.
+        type: The machine-readable error type from the response (``authentication_error``,
+            ``validation_error``, ``not_found`` ...), if any. New types may appear; the
+            exception class is chosen from the HTTP status, so an unknown type never breaks
+            error handling.
         message: The human-readable message.
         fields: Validation messages keyed by dotted path (``transcript.0.speaker``);
             empty when the response has none.
         body: The parsed JSON error body, or the raw text when it wasn't JSON.
+        request_id: The ID of the failed request, for support: ``error.request_id`` from the
+            body, else the ``Midwater-Request-Id`` response header, else ``None``. Both are
+            planned on the server side, so this is ``None`` for now.
     """
 
     status: Optional[int]
@@ -47,6 +57,7 @@ class APIError(MidwaterError):
     message: str
     fields: Dict[str, List[str]]
     body: Any
+    request_id: Optional[str]
 
     def __init__(
         self,
@@ -56,6 +67,7 @@ class APIError(MidwaterError):
         type: Optional[str] = None,
         fields: Optional[Dict[str, List[str]]] = None,
         body: Any = None,
+        request_id: Optional[str] = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -63,6 +75,7 @@ class APIError(MidwaterError):
         self.type = type
         self.fields = dict(fields) if fields else {}
         self.body = body
+        self.request_id = request_id
 
     def __str__(self) -> str:
         parts = []
@@ -70,18 +83,24 @@ class APIError(MidwaterError):
             parts.append(f"status {self.status}")
         if self.type:
             parts.append(self.type)
+        if self.request_id:
+            parts.append(f"request {self.request_id}")
         suffix = f" ({', '.join(parts)})" if parts else ""
         return f"{self.message}{suffix}"
 
     def __repr__(self) -> str:
         return (
             f"{self.__class__.__name__}(message={self.message!r}, status={self.status!r}, "
-            f"type={self.type!r})"
+            f"type={self.type!r}, request_id={self.request_id!r})"
         )
 
 
 class AuthenticationError(APIError):
     """401, or no usable API key was configured."""
+
+
+class PermissionDeniedError(APIError):
+    """403: the API key can't do this."""
 
 
 class ValidationError(APIError):
@@ -92,12 +111,28 @@ class NotFoundError(APIError):
     """404: not found in the API key's environment."""
 
 
+class RequestTimeoutError(APIError):
+    """408: the server timed out waiting for the request."""
+
+
+class IdempotencyConflictError(APIError):
+    """409: this ``Idempotency-Key`` was already used with a different body."""
+
+
+class PayloadTooLargeError(APIError):
+    """413: the request body is too large."""
+
+
 class RateLimitError(APIError):
     """429: too many requests."""
 
 
 class ServerError(APIError):
     """5xx: something went wrong on Midwater's side."""
+
+
+class ServiceUnavailableError(ServerError):
+    """503: Midwater is briefly unavailable."""
 
 
 class APIConnectionError(MidwaterError):

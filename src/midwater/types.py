@@ -1,7 +1,12 @@
 """Request payloads (TypedDicts) and response models (dataclasses) for the Midwater API.
 
 Response models keep the full decoded JSON in ``raw`` so fields added to the API later are
-reachable before the SDK names them.
+reachable before the SDK names them. Enum-like fields are typed as ``Literal`` for editors, but
+values added to the API later are passed through unchanged, never rejected.
+
+Top-level response models also carry ``request_id``, read from the ``Midwater-Request-Id``
+response header. The server doesn't send that header yet (it's planned), so it is ``None`` for
+now.
 """
 
 from __future__ import annotations
@@ -159,6 +164,7 @@ class ConversationAccepted:
     replayed: bool = False
     idempotency_key: Optional[str] = None
     raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    request_id: Optional[str] = field(default=None, compare=False)
 
     @classmethod
     def from_dict(
@@ -274,6 +280,7 @@ class Conversation:
     ended_at: Optional[str] = None
     ended_by: Optional[str] = None
     raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    request_id: Optional[str] = field(default=None, compare=False)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Conversation:
@@ -306,6 +313,7 @@ class Feedback:
     verdict: FeedbackValue
     source: str
     raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    request_id: Optional[str] = field(default=None, compare=False)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Feedback:
@@ -358,6 +366,7 @@ class AgentHealth:
     last_7_days: HealthWindow
     last_30_days: HealthWindow
     raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    request_id: Optional[str] = field(default=None, compare=False)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> AgentHealth:
@@ -402,6 +411,7 @@ class GroupHealth:
     last_7_days: HealthWindow
     last_30_days: HealthWindow
     raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    request_id: Optional[str] = field(default=None, compare=False)
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> GroupHealth:

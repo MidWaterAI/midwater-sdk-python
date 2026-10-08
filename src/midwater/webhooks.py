@@ -24,7 +24,6 @@ from .types import WebhookEvent
 
 __all__ = [
     "SIGNATURE_HEADER",
-    "LEGACY_SIGNATURE_HEADER",
     "EVENT_HEADER",
     "DELIVERY_HEADER",
     "DEFAULT_TOLERANCE",
@@ -34,8 +33,6 @@ __all__ = [
 ]
 
 SIGNATURE_HEADER = "Midwater-Signature"
-# Older deliveries were signed under this header name; read only when the new one is absent.
-LEGACY_SIGNATURE_HEADER = "Verdict-Signature"
 EVENT_HEADER = "Midwater-Event"
 DELIVERY_HEADER = "Midwater-Delivery"
 DEFAULT_TOLERANCE = 300
@@ -114,8 +111,6 @@ def verify(
         raise WebhookVerificationError("no_secret", "No webhook signing secret was given")
 
     header = _header(headers, SIGNATURE_HEADER)
-    if header is None:
-        header = _header(headers, LEGACY_SIGNATURE_HEADER)
     if header is None or not header.strip():
         raise WebhookVerificationError(
             "missing_header", f"The {SIGNATURE_HEADER} header is missing"

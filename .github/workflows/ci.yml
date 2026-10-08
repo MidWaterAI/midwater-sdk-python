@@ -23,11 +23,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+      - name: Check pinned contract and fixtures
+        run: sha256sum -c fixtures/SHA256SUMS
       - name: Lint
-        run: ruff check .
+        run: |
+          ruff check .
+          ruff format --check .
       - name: Type-check
         run: mypy --strict src
-      - name: Unit tests
-        run: pytest
+      - name: Unit tests with coverage
+        run: pytest --cov=midwater --cov-report=term-missing --cov-fail-under=90
       - name: Build sdist and wheel
         run: python -m build

@@ -1,35 +1,59 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Callable, List
+from typing import Any, Callable, Dict, List
 
 import httpx
 import pytest
 
 import midwater._client as client_module
-from helpers import API_KEY, BASE_URL, conversation_json, json_response, window_json
+from helpers import (
+    API_KEY,
+    BASE_URL,
+    conversation_json,
+    error_json,
+    fixture,
+    json_response,
+)
 from midwater import (
     APIConnectionError,
     APIError,
     AuthenticationError,
+    IdempotencyConflictError,
     Midwater,
     NotFoundError,
+    PayloadTooLargeError,
+    PermissionDeniedError,
     RateLimitError,
+    RequestTimeoutError,
     ServerError,
+    ServiceUnavailableError,
     ValidationError,
 )
 from midwater._errors import WaitTimeoutError
-from midwater.types import Conversation, ConversationAccepted, ConversationCreate
+from midwater.types import AgentHealth, Conversation, ConversationAccepted, GroupHealth
 
-PAYLOAD: ConversationCreate = {
-    "external_id": "call_8f2a91",
-    "channel": "voice",
-    "agent": {"id": "front-desk", "name": "Front desk"},
-    "transcript": [{"speaker": "agent", "text": "Hello"}],
-    "events": [{"type": "tool_call", "name": "reschedule_appointment", "status": "success"}],
+PAYLOAD: Dict[str, Any] = fixture("conversation-create.json")
+ACCEPTED: Dict[str, Any] = fixture("conversation-accepted.json")
+DUPLICATE: Dict[str, Any] = fixture("conversation-duplicate.json")
+FEEDBACK: Dict[str, Any] = fixture("feedback.json")
+FEEDBACK_CREATE: Dict[str, Any] = fixture("feedback-create.json")
+ERRORS: Dict[str, Any] = fixture("errors.json")
+SERVER_ERROR = error_json("server_error")
+
+# Expected exception class for every error type in fixtures/errors.json.
+EXPECTED_CLASS = {
+    "authentication_error": AuthenticationError,
+    "permission_denied": PermissionDeniedError,
+    "invalid_json": ValidationError,
+    "validation_error": ValidationError,
+    "not_found": NotFoundError,
+    "idempotency_conflict": IdempotencyConflictError,
+    "payload_too_large": PayloadTooLargeError,
+    "rate_limited": RateLimitError,
+    "server_error": ServerError,
+    "service_unavailable": ServiceUnavailableError,
 }
-
-ACCEPTED = {"id": "cmv0187nm005po3016rag4dcg", "status": "queued"}
 
 MakeClient = Callable[..., Any]
 
@@ -46,6 +70,7 @@ def test_create_request_shape(make_client: MakeClient) -> None:
     assert accepted.status == "queued"
     assert accepted.duplicate is False
     assert accepted.replayed is False
+    assert accepted.request_id is None
 
     req = rec.requests[0]
     assert req.method == "POST"
@@ -54,7 +79,7 @@ def test_create_request_shape(make_client: MakeClient) -> None:
     assert req.headers["accept"] == "application/json"
     assert req.headers["content-type"] == "application/json"
     assert req.headers["user-agent"] == "midwater-python/0.1.0"
-    assert rec.json_body() == PAYLOAD
+    assert rec.json_body() == fixture("conversation-create.json")
 
     key = req.headers["idempotency-key"]
     assert str(uuid.UUID(key)) == key
@@ -73,7 +98,7 @@ def test_generated_idempotency_key_reused_across_retries(
 ) -> None:
     client, rec = make_client(
         [
-            json_response(503, {"error": {"type": "server_error", "message": "down"}}),
+            json_response(503, error_json("service_unavailable")),
             httpx.ConnectError("refused"),
             json_response(202, ACCEPTED),
         ]
@@ -94,7 +119,7 @@ def test_each_create_call_gets_a_new_key(make_client: MakeClient) -> None:
 
 
 def test_get_request_has_no_body_headers(make_client: MakeClient) -> None:
-    client, rec = make_client([json_response(200, conversation_json())])
+    client, rec = make_client([json_response(200, fixture("conversation.json"))])
     conv = client.conversations.get("cmv0187nm005po3016rag4dcg")
     req = rec.requests[0]
     assert req.method == "GET"
@@ -104,14 +129,42 @@ def test_get_request_has_no_body_headers(make_client: MakeClient) -> None:
     assert req.content == b""
 
     assert isinstance(conv, Conversation)
+    assert conv.external_id == "call_8f2a91"
     assert conv.outcome == "resolved"
     assert conv.agent.id == "front-desk"
+    assert conv.agent.version == "1.0.0"
     assert conv.group is None
-    assert conv.results[0].check_key == "need_unresolved"
-    assert conv.results[0].verdict == "pass"
-    assert conv.results[0].decided_by == "model"
-    assert conv.results[0].scorer_version == "2026-10-06.3"
+    assert conv.transcript[1]["asr_confidence"] == 0.93
+    assert conv.events[0]["name"] == "reschedule_appointment"
+    result = conv.results[0]
+    assert result.check_key == "appointment_not_completed"
+    assert result.verdict == "pass"
+    assert result.decided_by == "rule"
+    assert result.score == 0.0
+    assert result.choice is None
+    assert result.latency_ms == 0
+    assert result.scorer_version == "2026-10-01.1"
     assert conv.raw["id"] == conv.id
+    assert conv.request_id is None
+
+
+def test_success_request_id_from_header(make_client: MakeClient) -> None:
+    client, _ = make_client(
+        [json_response(200, fixture("conversation.json"), {"Midwater-Request-Id": "req_1"})]
+    )
+    assert client.conversations.get("c1").request_id == "req_1"
+
+
+def test_unknown_enum_values_and_fields_pass_through(make_client: MakeClient) -> None:
+    body = conversation_json(outcome="callback_booked", brand_new_field=1)
+    body["status"] = "archived"
+    body["results"][0]["verdict"] = "partially_met"
+    client, _ = make_client([json_response(200, body)])
+    conv = client.conversations.get("c1")
+    assert conv.status == "archived"
+    assert conv.outcome == "callback_booked"
+    assert conv.results[0].verdict == "partially_met"
+    assert conv.raw["brand_new_field"] == 1
 
 
 @pytest.mark.parametrize(
@@ -136,57 +189,59 @@ def test_empty_id_rejected(make_client: MakeClient) -> None:
 
 
 def test_feedback_request(make_client: MakeClient) -> None:
-    body = {"id": "lbl_1", "check_key": "need_unresolved", "verdict": "fail", "source": "api"}
-    client, rec = make_client([json_response(200, body)])
-    fb = client.conversations.feedback("ext/1", "need_unresolved", "fail", note="Hung up")
+    client, rec = make_client([json_response(200, FEEDBACK)])
+    fb = client.conversations.feedback(
+        "ext/1",
+        FEEDBACK_CREATE["check_key"],
+        FEEDBACK_CREATE["verdict"],
+        note=FEEDBACK_CREATE["note"],
+    )
     req = rec.requests[0]
     assert req.method == "POST"
     assert req.url.raw_path.decode() == "/v1/conversations/ext%2F1/feedback"
     assert req.headers["content-type"] == "application/json"
-    assert rec.json_body() == {"check_key": "need_unresolved", "verdict": "fail", "note": "Hung up"}
+    assert rec.json_body() == FEEDBACK_CREATE
+    key = req.headers["idempotency-key"]
+    assert str(uuid.UUID(key)) == key
+    assert fb.id == FEEDBACK["id"]
     assert fb.source == "api"
     assert fb.verdict == "fail"
+    assert fb.request_id is None
+
+
+def test_feedback_uses_given_idempotency_key(make_client: MakeClient) -> None:
+    client, rec = make_client([json_response(200, FEEDBACK)])
+    client.conversations.feedback("c1", "k", "fail", idempotency_key="fb-1")
+    assert rec.requests[0].headers["idempotency-key"] == "fb-1"
 
 
 def test_feedback_omits_note_when_none(make_client: MakeClient) -> None:
-    body = {"id": "lbl_1", "check_key": "k", "verdict": "pass", "source": "api"}
-    client, rec = make_client([json_response(200, body)])
+    client, rec = make_client([json_response(200, FEEDBACK)])
     client.conversations.feedback("c1", "k", "pass")
     assert rec.json_body() == {"check_key": "k", "verdict": "pass"}
 
 
 def test_agent_and_group_health(make_client: MakeClient) -> None:
-    agent = {
-        "agent_id": "front-desk",
-        "name": "Front desk",
-        "environment": "test",
-        "health_status": "not_enough_calls",
-        "reason": "Needs 4 more calls with an outcome this week",
-        "group": {"id": "clinics", "name": "Clinics"},
-        "last_7_days": window_json(),
-        "last_30_days": window_json(),
-    }
-    group = {
-        "group_id": "clinics",
-        "name": "Clinics",
-        "environment": "test",
-        "health_status": "healthy",
-        "reason": "All agents healthy",
-        "agents": [{"id": "front-desk", "name": "Front desk", "health_status": "healthy"}],
-        "last_7_days": window_json(),
-        "last_30_days": window_json(),
-    }
-    client, rec = make_client([json_response(200, agent), json_response(200, group)])
+    client, rec = make_client(
+        [
+            json_response(200, fixture("agent-health.json")),
+            json_response(200, fixture("group-health.json")),
+        ]
+    )
     a = client.agents.health("front-desk")
-    g = client.groups.health("clinics")
+    g = client.groups.health("brightsmile-dental")
     assert rec.requests[0].url.path == "/v1/agents/front-desk/health"
-    assert rec.requests[1].url.path == "/v1/groups/clinics/health"
-    assert a.environment == "test"
-    assert a.group is not None and a.group.id == "clinics"
-    assert a.last_7_days.resolution_rate == 0.5
-    assert a.last_7_days.handed_to_person_rate is None
-    assert g.agents[0].id == "front-desk"
-    assert g.last_30_days.conversations == 3
+    assert rec.requests[1].url.path == "/v1/groups/brightsmile-dental/health"
+    assert isinstance(a, AgentHealth)
+    assert a.environment == "live"
+    assert a.health_status == "watch"
+    assert a.group is not None and a.group.id == "brightsmile-dental"
+    assert a.last_7_days.resolution_rate == 0.81
+    assert a.last_30_days.compliance_failures == 1
+    assert isinstance(g, GroupHealth)
+    assert [agent.id for agent in g.agents] == ["front-desk", "after-hours"]
+    assert g.last_30_days.conversations == 1270
+    assert a.request_id is None and g.request_id is None
 
 
 # ----------------------------------------------------------------------------- replay / duplicate
@@ -198,8 +253,7 @@ def test_replayed_header(make_client: MakeClient) -> None:
 
 
 def test_duplicate_flag(make_client: MakeClient) -> None:
-    dup = {"id": ACCEPTED["id"], "status": "done", "duplicate": True}
-    client, _ = make_client([json_response(200, dup)])
+    client, _ = make_client([json_response(200, DUPLICATE)])
     accepted = client.conversations.create(PAYLOAD)
     assert accepted.duplicate is True
     assert accepted.replayed is False
@@ -209,55 +263,98 @@ def test_duplicate_flag(make_client: MakeClient) -> None:
 # ----------------------------------------------------------------------------- error mapping
 
 
-@pytest.mark.parametrize(
-    ("status", "error_type", "cls"),
-    [
-        (401, "authentication_error", AuthenticationError),
-        (404, "not_found", NotFoundError),
-        (400, "invalid_json", ValidationError),
-        (422, "validation_error", ValidationError),
-        (429, "rate_limited", RateLimitError),
-        (500, "server_error", ServerError),
-        (502, "server_error", ServerError),
-        (501, "not_implemented", ServerError),
-        (409, "conflict", APIError),
-        (403, "forbidden", APIError),
-    ],
-)
-def test_error_mapping(
-    make_client: MakeClient, sleeps: List[float], status: int, error_type: str, cls: type
+@pytest.mark.parametrize("error_type", sorted(ERRORS))
+def test_error_mapping_from_shared_fixture(
+    make_client: MakeClient, sleeps: List[float], error_type: str
 ) -> None:
-    body = {"error": {"type": error_type, "message": "Something specific"}}
-    client, _ = make_client([json_response(status, body)], max_retries=0)
-    with pytest.raises(cls) as info:
+    entry = ERRORS[error_type]
+    status, body = entry["status"], entry["body"]
+    client, rec = make_client([json_response(status, body)], max_retries=0)
+    with pytest.raises(APIError) as info:
         client.conversations.get("c1")
     err = info.value
-    assert isinstance(err, APIError)
-    assert type(err) is cls
+    assert type(err) is EXPECTED_CLASS[error_type]
     assert err.status == status
     assert err.type == error_type
-    assert err.message == "Something specific"
-    assert err.fields == {}
+    assert err.message == body["error"]["message"]
     assert err.body == body
+    assert err.request_id == body["error"].get("request_id")
+    if err.request_id:
+        assert err.request_id in str(err)
+    expected_fields = body["error"].get("fields", {})
+    assert err.fields == expected_fields
+    assert len(rec.requests) == 1
     assert API_KEY not in str(err) and API_KEY not in repr(err)
 
 
+def test_every_fixture_error_type_has_an_expected_class() -> None:
+    assert set(ERRORS) == set(EXPECTED_CLASS)
+
+
+@pytest.mark.parametrize(
+    ("status", "cls"),
+    [
+        (408, RequestTimeoutError),
+        (418, APIError),
+        (402, APIError),
+        (501, ServerError),
+        (502, ServerError),
+        (504, ServerError),
+        (599, ServerError),
+        (503, ServiceUnavailableError),
+    ],
+)
+def test_error_mapping_by_status_with_unknown_type(
+    make_client: MakeClient, sleeps: List[float], status: int, cls: type
+) -> None:
+    body = {"error": {"type": "brand_new_error_type", "message": "Something specific"}}
+    client, _ = make_client([json_response(status, body)], max_retries=0)
+    with pytest.raises(APIError) as info:
+        client.conversations.get("c1")
+    assert type(info.value) is cls
+    assert info.value.type == "brand_new_error_type"
+    assert info.value.request_id is None
+
+
+def test_service_unavailable_is_a_server_error() -> None:
+    assert issubclass(ServiceUnavailableError, ServerError)
+
+
+def test_error_request_id_from_header(make_client: MakeClient) -> None:
+    client, _ = make_client(
+        [json_response(404, error_json("not_found"), {"Midwater-Request-Id": "req_hdr"})]
+    )
+    with pytest.raises(NotFoundError) as info:
+        client.conversations.get("c1")
+    assert info.value.request_id == "req_hdr"
+    assert "req_hdr" in repr(info.value)
+
+
+def test_error_body_request_id_wins_over_header(make_client: MakeClient) -> None:
+    client, _ = make_client(
+        [json_response(403, error_json("permission_denied"), {"Midwater-Request-Id": "req_hdr"})]
+    )
+    with pytest.raises(PermissionDeniedError) as info:
+        client.conversations.get("c1")
+    assert info.value.request_id == "req_8Jx2kQ4mT9"
+
+
 def test_validation_error_fields(make_client: MakeClient) -> None:
-    body = {
-        "error": {
-            "type": "validation_error",
-            "message": "The conversation payload is invalid",
-            "fields": {
-                "channel": ["Invalid enum value. Expected 'voice' | 'chat', received 'fax'"],
-                "transcript": ["transcript needs at least one turn"],
-            },
-        }
-    }
-    client, _ = make_client([json_response(422, body)])
+    client, _ = make_client([json_response(422, error_json("validation_error"))])
     with pytest.raises(ValidationError) as info:
         client.conversations.create({"external_id": "x", "channel": "fax", "transcript": []})
     assert set(info.value.fields) == {"channel", "transcript"}
     assert info.value.fields["transcript"] == ["transcript needs at least one turn"]
+
+
+def test_odd_fields_are_normalised(make_client: MakeClient) -> None:
+    body = {
+        "error": {"type": "validation_error", "message": "bad", "fields": {"a": "one", "b": None}}
+    }
+    client, _ = make_client([json_response(422, body)])
+    with pytest.raises(ValidationError) as info:
+        client.conversations.get("c1")
+    assert info.value.fields == {"a": ["one"]}
 
 
 def test_non_json_error_body(make_client: MakeClient, sleeps: List[float]) -> None:
@@ -278,6 +375,13 @@ def test_non_json_success_body(make_client: MakeClient) -> None:
     assert info.value.status == 200
 
 
+def test_non_object_success_body(make_client: MakeClient) -> None:
+    client, _ = make_client([json_response(200, [1, 2])])
+    with pytest.raises(APIError) as info:
+        client.conversations.get("c1")
+    assert "isn't an object" in info.value.message
+
+
 def test_connection_error(make_client: MakeClient, sleeps: List[float]) -> None:
     client, rec = make_client([httpx.ConnectError("refused")])
     with pytest.raises(APIConnectionError):
@@ -286,13 +390,22 @@ def test_connection_error(make_client: MakeClient, sleeps: List[float]) -> None:
     assert len(sleeps) == 2
 
 
+def test_non_transport_request_error_not_retried(
+    make_client: MakeClient, sleeps: List[float]
+) -> None:
+    client, rec = make_client([httpx.TooManyRedirects("loop")])
+    with pytest.raises(APIConnectionError):
+        client.conversations.get("c1")
+    assert len(rec.requests) == 1
+
+
 # ----------------------------------------------------------------------------- retries
 
 
 def test_retry_on_503_then_success(make_client: MakeClient, sleeps: List[float]) -> None:
     client, rec = make_client(
         [
-            json_response(503, {"error": {"type": "server_error", "message": "x"}}),
+            json_response(503, error_json("service_unavailable")),
             json_response(200, conversation_json()),
         ]
     )
@@ -303,52 +416,53 @@ def test_retry_on_503_then_success(make_client: MakeClient, sleeps: List[float])
     assert 0.5 <= sleeps[0] <= 0.625
 
 
-def test_backoff_grows_and_gives_up(make_client: MakeClient, sleeps: List[float]) -> None:
+@pytest.mark.parametrize("status", [408, 429, 500, 501, 502, 503, 504, 599])
+def test_retry_statuses(make_client: MakeClient, sleeps: List[float], status: int) -> None:
     client, rec = make_client(
-        [json_response(500, {"error": {"type": "server_error", "message": "x"}})], max_retries=4
+        [json_response(status, SERVER_ERROR), json_response(200, conversation_json())]
     )
+    client.conversations.get("c1")
+    assert len(rec.requests) == 2
+
+
+def test_backoff_grows_and_gives_up(make_client: MakeClient, sleeps: List[float]) -> None:
+    client, rec = make_client([json_response(500, SERVER_ERROR)], max_retries=3)
     with pytest.raises(ServerError):
         client.conversations.get("c1")
-    assert len(rec.requests) == 5
-    assert len(sleeps) == 4
+    assert len(rec.requests) == 4
+    assert len(sleeps) == 3
     for attempt, delay in enumerate(sleeps):
-        base = min(0.5 * 2**attempt, 8.0)
-        assert base <= delay <= min(base * 1.25, 8.0)
+        base = 0.5 * 2**attempt
+        assert base <= delay <= base * 1.25
 
 
-def test_backoff_capped_at_8s(make_client: MakeClient, sleeps: List[float]) -> None:
-    client, _ = make_client(
-        [json_response(503, {"error": {"type": "server_error", "message": "x"}})], max_retries=6
-    )
-    with pytest.raises(ServerError):
+def test_max_retries_clamped_to_3(make_client: MakeClient, sleeps: List[float]) -> None:
+    client, rec = make_client([json_response(503, SERVER_ERROR)], max_retries=10)
+    assert client.max_retries == 3
+    with pytest.raises(ServiceUnavailableError):
         client.conversations.get("c1")
-    assert max(sleeps) <= 8.0
-    assert sleeps[-1] == 8.0
+    assert len(rec.requests) == 4
 
 
-def test_no_retry_on_422(make_client: MakeClient, sleeps: List[float]) -> None:
-    body = {"error": {"type": "validation_error", "message": "bad", "fields": {"_root": ["x"]}}}
-    client, rec = make_client([json_response(422, body)])
-    with pytest.raises(ValidationError):
+def test_backoff_capped_at_8s() -> None:
+    from midwater import _base
+
+    assert _base.retry_delay(10) == 8.0
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 409, 413, 418, 422])
+def test_no_retry_on_other_4xx(make_client: MakeClient, sleeps: List[float], status: int) -> None:
+    client, rec = make_client([json_response(status, {"error": {"type": "x", "message": "y"}})])
+    with pytest.raises(APIError):
         client.conversations.create(PAYLOAD)
     assert len(rec.requests) == 1
     assert sleeps == []
 
 
-@pytest.mark.parametrize("status", [400, 401, 404, 409])
-def test_no_retry_on_other_4xx(make_client: MakeClient, sleeps: List[float], status: int) -> None:
-    client, rec = make_client([json_response(status, {"error": {"type": "x", "message": "y"}})])
-    with pytest.raises(APIError):
-        client.conversations.get("c1")
-    assert len(rec.requests) == 1
-
-
 def test_retry_after_honoured(make_client: MakeClient, sleeps: List[float]) -> None:
     client, rec = make_client(
         [
-            json_response(
-                429, {"error": {"type": "rate_limited", "message": "slow"}}, {"Retry-After": "3"}
-            ),
+            json_response(429, error_json("rate_limited"), {"Retry-After": "3"}),
             json_response(200, conversation_json()),
         ]
     )
@@ -357,14 +471,24 @@ def test_retry_after_honoured(make_client: MakeClient, sleeps: List[float]) -> N
     assert len(rec.requests) == 2
 
 
-def test_non_numeric_retry_after_falls_back(make_client: MakeClient, sleeps: List[float]) -> None:
+def test_retry_after_capped_at_60s(make_client: MakeClient, sleeps: List[float]) -> None:
     client, _ = make_client(
         [
-            json_response(
-                503,
-                {"error": {"type": "server_error", "message": "x"}},
-                {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"},
-            ),
+            json_response(503, SERVER_ERROR, {"Retry-After": "3600"}),
+            json_response(200, conversation_json()),
+        ]
+    )
+    client.conversations.get("c1")
+    assert sleeps == [60.0]
+
+
+@pytest.mark.parametrize("value", ["Wed, 21 Oct 2026 07:28:00 GMT", "-5"])
+def test_unusable_retry_after_falls_back(
+    make_client: MakeClient, sleeps: List[float], value: str
+) -> None:
+    client, _ = make_client(
+        [
+            json_response(503, SERVER_ERROR, {"Retry-After": value}),
             json_response(200, conversation_json()),
         ]
     )
@@ -373,33 +497,42 @@ def test_non_numeric_retry_after_falls_back(make_client: MakeClient, sleeps: Lis
 
 
 def test_max_retries_zero(make_client: MakeClient, sleeps: List[float]) -> None:
-    client, rec = make_client(
-        [json_response(503, {"error": {"type": "server_error", "message": "x"}})], max_retries=0
-    )
+    client, rec = make_client([json_response(503, SERVER_ERROR)], max_retries=0)
     with pytest.raises(ServerError):
         client.conversations.get("c1")
     assert len(rec.requests) == 1
 
 
-def test_feedback_not_retried_on_5xx(make_client: MakeClient, sleeps: List[float]) -> None:
-    client, rec = make_client(
-        [json_response(503, {"error": {"type": "server_error", "message": "x"}})]
-    )
-    with pytest.raises(ServerError):
+@pytest.mark.parametrize("status", [408, 429, 500, 503])
+def test_feedback_never_retried(make_client: MakeClient, sleeps: List[float], status: int) -> None:
+    client, rec = make_client([json_response(status, SERVER_ERROR)])
+    with pytest.raises(APIError):
+        client.conversations.feedback("c1", "k", "pass")
+    assert len(rec.requests) == 1
+    assert sleeps == []
+
+
+def test_feedback_not_retried_on_connection_error(
+    make_client: MakeClient, sleeps: List[float]
+) -> None:
+    client, rec = make_client([httpx.ConnectError("refused")])
+    with pytest.raises(APIConnectionError):
         client.conversations.feedback("c1", "k", "pass")
     assert len(rec.requests) == 1
 
 
-def test_feedback_retried_on_429(make_client: MakeClient, sleeps: List[float]) -> None:
-    body = {"id": "lbl_1", "check_key": "k", "verdict": "pass", "source": "api"}
+def test_health_retried(make_client: MakeClient, sleeps: List[float]) -> None:
     client, rec = make_client(
         [
-            json_response(429, {"error": {"type": "rate_limited", "message": "x"}}),
-            json_response(200, body),
+            httpx.ReadTimeout("slow"),
+            json_response(200, fixture("agent-health.json")),
+            json_response(502, SERVER_ERROR),
+            json_response(200, fixture("group-health.json")),
         ]
     )
-    assert client.conversations.feedback("c1", "k", "pass").id == "lbl_1"
-    assert len(rec.requests) == 2
+    client.agents.health("front-desk")
+    client.groups.health("brightsmile-dental")
+    assert len(rec.requests) == 4
 
 
 # ----------------------------------------------------------------------------- wait()
@@ -439,6 +572,7 @@ def test_wait_times_out(make_client: MakeClient, monkeypatch: pytest.MonkeyPatch
     assert isinstance(info.value, TimeoutError)
     assert info.value.conversation is not None
     assert info.value.conversation.status == "queued"
+    assert "last status: queued" in str(info.value)
     assert len(rec.requests) == 4  # t=0, 2, 4, 5
     assert clock[0] == 1005.0
 
@@ -449,17 +583,25 @@ def test_wait_real_clock_timeout(make_client: MakeClient) -> None:
         client.conversations.wait("c1", timeout=0.05, interval=0.01)
 
 
-def test_wait_rejects_bad_interval(make_client: MakeClient) -> None:
+@pytest.mark.parametrize(("timeout", "interval"), [(60, 0), (-1, 1)])
+def test_wait_rejects_bad_args(make_client: MakeClient, timeout: float, interval: float) -> None:
     client, _ = make_client([json_response(200, conversation_json())])
     with pytest.raises(ValueError):
-        client.conversations.wait("c1", interval=0)
+        client.conversations.wait("c1", timeout=timeout, interval=interval)
+
+
+def test_real_sleep_helper_is_used(make_client: MakeClient) -> None:
+    client, _ = make_client(
+        [json_response(200, conversation_json("queued")), json_response(200, conversation_json())]
+    )
+    assert client.conversations.wait("c1", interval=0.001).status == "done"
 
 
 # ----------------------------------------------------------------------------- lifecycle
 
 
 def test_context_manager_closes_owned_client() -> None:
-    with Midwater(api_key=API_KEY) as client:
+    with Midwater(api_key=API_KEY, base_url=BASE_URL) as client:
         http = client._http
     assert http.is_closed
 

@@ -1,0 +1,125 @@
+{
+  "authentication_error": {
+    "response": "Unauthorized",
+    "planned": false,
+    "body": {
+      "error": {
+        "type": "authentication_error",
+        "message": "Missing or invalid API key. Use Authorization: Bearer mw_test_… or mw_live_…"
+      }
+    },
+    "status": 401
+  },
+  "permission_denied": {
+    "response": "PermissionDenied",
+    "planned": true,
+    "body": {
+      "error": {
+        "type": "permission_denied",
+        "message": "This key can't do that",
+        "request_id": "req_8Jx2kQ4mT9"
+      }
+    },
+    "status": 403
+  },
+  "invalid_json": {
+    "response": "InvalidJson",
+    "planned": false,
+    "body": {
+      "error": {
+        "type": "invalid_json",
+        "message": "Body must be valid JSON"
+      }
+    },
+    "status": 400
+  },
+  "validation_error": {
+    "response": "ValidationError",
+    "planned": false,
+    "body": {
+      "error": {
+        "type": "validation_error",
+        "message": "The conversation payload is invalid",
+        "fields": {
+          "channel": [
+            "Invalid enum value. Expected 'voice' | 'chat', received 'fax'"
+          ],
+          "transcript": [
+            "transcript needs at least one turn"
+          ]
+        }
+      }
+    },
+    "status": 422
+  },
+  "not_found": {
+    "response": "NotFound",
+    "planned": false,
+    "body": {
+      "error": {
+        "type": "not_found",
+        "message": "Conversation not found"
+      }
+    },
+    "status": 404
+  },
+  "idempotency_conflict": {
+    "response": "IdempotencyConflict",
+    "planned": true,
+    "body": {
+      "error": {
+        "type": "idempotency_conflict",
+        "message": "This Idempotency-Key was used with a different body",
+        "request_id": "req_8Jx2kQ4mT9"
+      }
+    },
+    "status": 409
+  },
+  "payload_too_large": {
+    "response": "PayloadTooLarge",
+    "planned": true,
+    "body": {
+      "error": {
+        "type": "payload_too_large",
+        "message": "The request body is too large",
+        "request_id": "req_8Jx2kQ4mT9"
+      }
+    },
+    "status": 413
+  },
+  "rate_limited": {
+    "response": "RateLimited",
+    "planned": true,
+    "body": {
+      "error": {
+        "type": "rate_limited",
+        "message": "Too many requests",
+        "request_id": "req_8Jx2kQ4mT9"
+      }
+    },
+    "status": 429
+  },
+  "server_error": {
+    "response": "ServerError",
+    "planned": false,
+    "body": {
+      "error": {
+        "type": "server_error",
+        "message": "Something went wrong on our side"
+      }
+    },
+    "status": 500
+  },
+  "service_unavailable": {
+    "response": "ServiceUnavailable",
+    "planned": true,
+    "body": {
+      "error": {
+        "type": "service_unavailable",
+        "message": "Midwater is briefly unavailable",
+        "request_id": "req_8Jx2kQ4mT9"
+      }
+    },
+    "status": 503
+  }
+}

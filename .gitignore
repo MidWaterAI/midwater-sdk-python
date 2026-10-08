@@ -10,3 +10,6 @@ build/
 !.env.example
 .DS_Store
 .venv312/
+.coverage
+.coverage.*
+htmlcov/

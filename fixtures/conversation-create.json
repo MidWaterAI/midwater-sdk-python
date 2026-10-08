@@ -1,0 +1,57 @@
+{
+  "external_id": "call_8f2a91",
+  "channel": "voice",
+  "started_at": "2026-10-05T14:02:11Z",
+  "ended_at": "2026-10-05T14:06:40Z",
+  "ended_by": "caller",
+  "agent": {
+    "id": "front-desk",
+    "name": "Front desk",
+    "version": "1.0.0"
+  },
+  "transcript": [
+    {
+      "speaker": "agent",
+      "text": "Thanks for calling, this call may be recorded. How can I help?",
+      "start_ms": 0,
+      "end_ms": 2400
+    },
+    {
+      "speaker": "user",
+      "text": "I need to move my appointment to Thursday.",
+      "start_ms": 2900,
+      "end_ms": 5100,
+      "asr_confidence": 0.93
+    },
+    {
+      "speaker": "agent",
+      "text": "Sure, I have Thursday at 10 AM. Does that work?",
+      "start_ms": 5600,
+      "end_ms": 8200
+    },
+    {
+      "speaker": "user",
+      "text": "Yes, that is perfect.",
+      "start_ms": 8700,
+      "end_ms": 9900,
+      "asr_confidence": 0.96
+    },
+    {
+      "speaker": "agent",
+      "text": "Great, you are all set for Thursday at 10 AM.",
+      "start_ms": 61500,
+      "end_ms": 64000
+    }
+  ],
+  "events": [
+    {
+      "type": "tool_call",
+      "name": "reschedule_appointment",
+      "status": "success",
+      "at_ms": 61000
+    }
+  ],
+  "metadata": {
+    "language": "en"
+  }
+}

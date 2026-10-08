@@ -1,0 +1,55 @@
+{
+  "id": "cmv0187nm005po3016rag4dcg",
+  "external_id": "call_8f2a91",
+  "channel": "voice",
+  "status": "done",
+  "outcome": "resolved",
+  "dashboard_url": "https://app.example/conversations/cmv0187nm005po3016rag4dcg",
+  "started_at": "2026-10-05T14:02:11.000Z",
+  "ended_at": "2026-10-05T14:06:40.000Z",
+  "ended_by": "caller",
+  "agent": {
+    "id": "front-desk",
+    "name": "Front desk",
+    "version": "1.0.0"
+  },
+  "group": null,
+  "transcript": [
+    {
+      "speaker": "agent",
+      "text": "Thanks for calling, this call may be recorded. How can I help?"
+    },
+    {
+      "speaker": "user",
+      "text": "I need to move my appointment to Thursday.",
+      "asr_confidence": 0.93
+    }
+  ],
+  "events": [
+    {
+      "type": "tool_call",
+      "name": "reschedule_appointment",
+      "status": "success",
+      "at_ms": 61000
+    }
+  ],
+  "metadata": {
+    "language": "en"
+  },
+  "results": [
+    {
+      "check_key": "appointment_not_completed",
+      "check_name": "Appointment request not completed",
+      "check_version": 1,
+      "check_status": "active",
+      "score": 0,
+      "verdict": "pass",
+      "choice": null,
+      "decided_by": "rule",
+      "reason": "A booking tool call succeeded.",
+      "evidence_turns": [],
+      "scorer_version": "2026-10-01.1",
+      "latency_ms": 0
+    }
+  ]
+}

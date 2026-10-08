@@ -4,16 +4,20 @@ and verify webhooks."""
 from __future__ import annotations
 
 from . import types, webhooks
-from ._base import DEFAULT_BASE_URL
 from ._client import AsyncMidwater, Midwater
 from ._errors import (
     APIConnectionError,
     APIError,
     AuthenticationError,
+    IdempotencyConflictError,
     MidwaterError,
     NotFoundError,
+    PayloadTooLargeError,
+    PermissionDeniedError,
     RateLimitError,
+    RequestTimeoutError,
     ServerError,
+    ServiceUnavailableError,
     ValidationError,
     WaitTimeoutError,
     WebhookVerificationError,
@@ -31,23 +35,29 @@ from .types import (
     HealthWindow,
     WebhookEvent,
 )
+from .webhooks import verify as verify_webhook
 
 __all__ = [
     "__version__",
-    "DEFAULT_BASE_URL",
     "Midwater",
     "AsyncMidwater",
     "MidwaterError",
     "APIError",
     "AuthenticationError",
+    "PermissionDeniedError",
     "ValidationError",
     "NotFoundError",
+    "RequestTimeoutError",
+    "IdempotencyConflictError",
+    "PayloadTooLargeError",
     "RateLimitError",
     "ServerError",
+    "ServiceUnavailableError",
     "APIConnectionError",
     "WaitTimeoutError",
     "WebhookVerificationError",
     "webhooks",
+    "verify_webhook",
     "types",
     "AgentHealth",
     "CheckResult",

@@ -15,17 +15,23 @@ import httpx
 from ._errors import (
     APIError,
     AuthenticationError,
+    IdempotencyConflictError,
+    MidwaterError,
     NotFoundError,
+    PayloadTooLargeError,
+    PermissionDeniedError,
     RateLimitError,
+    RequestTimeoutError,
     ServerError,
+    ServiceUnavailableError,
     ValidationError,
 )
 from ._version import __version__
 
-# Placeholder host until Midwater's API is deployed. Change it here only.
-DEFAULT_BASE_URL = "https://api.midwater.ai"
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_MAX_RETRIES = 2
+# Retry at most 3 times, whatever the caller asks for.
+MAX_RETRIES_CAP = 3
 
 API_KEY_ENV = "MIDWATER_API_KEY"
 BASE_URL_ENV = "MIDWATER_BASE_URL"
@@ -35,7 +41,10 @@ USER_AGENT = f"midwater-python/{__version__}"
 # Test keys start mw_test_, live keys mw_live_. Keys made before October 2026 start vk_.
 _API_KEY_PATTERN = re.compile(r"^(mw|vk)_(test|live)_")
 
-RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+REQUEST_ID_HEADER = "Midwater-Request-Id"
+
+# 408, 429 and every 5xx. Retried only on requests that are safe to repeat.
+RETRY_STATUSES = frozenset({408, 429, *range(500, 600)})
 _BACKOFF_BASE = 0.5
 _BACKOFF_CAP = 8.0
 _RETRY_AFTER_CAP = 60.0
@@ -57,14 +66,20 @@ def resolve_api_key(api_key: Optional[str]) -> str:
 
 
 def resolve_base_url(base_url: Optional[str]) -> str:
-    url = base_url or os.environ.get(BASE_URL_ENV) or DEFAULT_BASE_URL
+    """There is no default host: the base URL comes from the argument or the environment."""
+    url = base_url or os.environ.get(BASE_URL_ENV)
+    if not url:
+        raise MidwaterError(
+            f"Set {BASE_URL_ENV} or pass base_url: the base URL for your Midwater environment"
+        )
     return url.rstrip("/")
 
 
 def validate_max_retries(max_retries: int) -> int:
-    if not isinstance(max_retries, int) or max_retries < 0:
+    """Reject negatives; clamp anything above ``MAX_RETRIES_CAP`` to the cap."""
+    if not isinstance(max_retries, int) or isinstance(max_retries, bool) or max_retries < 0:
         raise ValueError("max_retries must be a non-negative integer")
-    return max_retries
+    return min(max_retries, MAX_RETRIES_CAP)
 
 
 def path_segment(value: str) -> str:
@@ -94,9 +109,7 @@ def build_headers(
 
 
 def should_retry_status(status: int, *, retryable: bool) -> bool:
-    """429 is always safe to retry (the request was refused). 5xx only for retry-safe requests."""
-    if status == 429:
-        return True
+    """408, 429 and 5xx are retried, and only for requests that are safe to repeat."""
     return retryable and status in RETRY_STATUSES
 
 
@@ -118,6 +131,14 @@ def retry_delay(attempt: int, headers: Optional[httpx.Headers] = None) -> float:
     base: float = _BACKOFF_BASE * (2.0**attempt)
     jittered = base * (1.0 + 0.25 * random.random())
     return min(jittered, _BACKOFF_CAP)
+
+
+def header_request_id(response: httpx.Response) -> Optional[str]:
+    """The ``Midwater-Request-Id`` response header (planned server-side; ``None`` until then)."""
+    value = response.headers.get(REQUEST_ID_HEADER)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return value.strip()
 
 
 def is_replayed(response: httpx.Response) -> bool:
@@ -143,15 +164,25 @@ def parse_json(response: httpx.Response) -> Dict[str, Any]:
     return data
 
 
+_STATUS_ERRORS: Dict[int, Type[APIError]] = {
+    400: ValidationError,
+    401: AuthenticationError,
+    403: PermissionDeniedError,
+    404: NotFoundError,
+    408: RequestTimeoutError,
+    409: IdempotencyConflictError,
+    413: PayloadTooLargeError,
+    422: ValidationError,
+    429: RateLimitError,
+    503: ServiceUnavailableError,
+}
+
+
 def _error_class(status: int) -> Type[APIError]:
-    if status == 401:
-        return AuthenticationError
-    if status == 404:
-        return NotFoundError
-    if status in (400, 422):
-        return ValidationError
-    if status == 429:
-        return RateLimitError
+    """Pick the exception class from the HTTP status alone, never from the error type."""
+    cls = _STATUS_ERRORS.get(status)
+    if cls is not None:
+        return cls
     if status >= 500:
         return ServerError
     return APIError
@@ -179,6 +210,7 @@ def error_from_response(response: httpx.Response) -> APIError:
 
     error_type: Optional[str] = None
     message: Optional[str] = None
+    request_id: Optional[str] = None
     fields: Dict[str, List[str]] = {}
     if isinstance(body, dict) and isinstance(body.get("error"), dict):
         err = body["error"]
@@ -186,7 +218,11 @@ def error_from_response(response: httpx.Response) -> APIError:
             error_type = err["type"]
         if isinstance(err.get("message"), str):
             message = err["message"]
+        if isinstance(err.get("request_id"), str) and err["request_id"]:
+            request_id = err["request_id"]
         fields = _normalise_fields(err.get("fields"))
+    if request_id is None:
+        request_id = header_request_id(response)
 
     if not message:
         reason = response.reason_phrase or "error"
@@ -196,4 +232,11 @@ def error_from_response(response: httpx.Response) -> APIError:
             message += f": {snippet[:200]}"
 
     cls = _error_class(status)
-    return cls(message, status=status, type=error_type, fields=fields, body=body)
+    return cls(
+        message,
+        status=status,
+        type=error_type,
+        fields=fields,
+        body=body,
+        request_id=request_id,
+    )

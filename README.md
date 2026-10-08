@@ -7,7 +7,8 @@ the result of every check, and each agent's health.
 
 - Sync (`Midwater`) and async (`AsyncMidwater`) clients built on `httpx`
 - Typed request payloads and response models (`py.typed`)
-- Automatic retries with backoff, and safe retries for sending conversations
+- Automatic retries with backoff, only on calls that are safe to repeat
+- An `Idempotency-Key` on every POST
 - Webhook signature verification
 - Python 3.9+
 
@@ -17,16 +18,17 @@ the result of every check, and each agent's health.
 pip install midwater
 ```
 
-> The package is **not published to PyPI yet**. Until it is, install from a checkout:
-> `pip install -e /path/to/midwater-sdk-python`.
+> **Version 0.1.0 is unpublished.** The package is not on PyPI yet. Until it is, install
+> from a checkout: `pip install -e /path/to/midwater-sdk-python`.
 
 ## Quickstart
 
-Set your API key (and, for a local stack, the base URL) in the environment:
+Set your API key and the base URL for your Midwater environment. Both are required; there is
+no default host.
 
 ```bash
 export MIDWATER_API_KEY=mw_test_...
-export MIDWATER_BASE_URL=http://localhost:3200   # optional; defaults to https://api.midwater.ai
+export MIDWATER_BASE_URL="<the base URL for your Midwater environment>"
 ```
 
 ```python
@@ -113,8 +115,10 @@ feedback = client.conversations.feedback(
 print(feedback.source)  # "api"
 ```
 
-Feedback isn't idempotent (every call adds a label), so the SDK does not retry it after server
-errors or connection failures; it only retries a `429`.
+Like every POST, feedback carries an `Idempotency-Key` (a generated UUID4, or pass your own
+with `idempotency_key=`). The SDK never retries feedback, not even after a `429` or a
+connection error: until the server de-duplicates feedback by that key (planned), a retry could
+store the same label twice.
 
 ## Agent and group health
 
@@ -135,8 +139,9 @@ Health is measured per environment: a test key sees test traffic only.
 Midwater signs every delivery with the `Midwater-Signature` header,
 `t=<unix seconds>,v1=<hex>`, an HMAC-SHA256 of `"<t>.<raw body>"` keyed with your destination's
 signing secret (`whsec_...`). During secret rotation a header can carry several `v1` values;
-any match passes. `webhooks.verify()` checks the signature and the timestamp (default tolerance
-300 seconds) and returns the parsed event.
+any match passes. `webhooks.verify()` (also exported as `midwater.verify_webhook`, same
+signature) checks the signature and the timestamp (default tolerance 300 seconds) and returns
+the parsed event.
 
 **Always pass the exact raw bytes you received.** Don't parse the JSON and serialise it again
 first; that changes the bytes and the signature won't match.
@@ -146,7 +151,7 @@ Flask:
 ```python
 import os
 from flask import Flask, request
-from midwater import webhooks, WebhookVerificationError
+from midwater import verify_webhook, WebhookVerificationError
 
 app = Flask(__name__)
 SECRET = os.environ["MIDWATER_WEBHOOK_SECRET"]
@@ -155,7 +160,7 @@ SECRET = os.environ["MIDWATER_WEBHOOK_SECRET"]
 @app.post("/midwater/webhooks")
 def midwater_webhook():
     try:
-        event = webhooks.verify(request.get_data(), request.headers, SECRET)
+        event = verify_webhook(request.get_data(), request.headers, SECRET)
     except WebhookVerificationError as exc:
         return {"error": exc.reason}, 400
     if event["type"] == "conversation.evaluated":
@@ -184,11 +189,10 @@ async def midwater_webhook(request: Request):
 ```
 
 `WebhookVerificationError.reason` is one of `missing_header`, `malformed_header`,
-`stale_timestamp`, `invalid_signature` or `no_secret`. Header lookup is case-insensitive. Older
-deliveries also carry the same signature under the legacy `Verdict-Signature` header; the SDK
-reads it only when `Midwater-Signature` is absent. Each delivery also has `Midwater-Event` (the
-event type) and `Midwater-Delivery` (the same on every retry of one delivery, useful for
-de-duplication). Answer with any 2xx within 5 seconds; anything else is retried.
+`stale_timestamp`, `invalid_signature` or `no_secret`. Header lookup is case-insensitive.
+Only `Midwater-Signature` is read. Each delivery also has `Midwater-Event` (the event type) and
+`Midwater-Delivery` (the same on every retry of one delivery, useful for de-duplication).
+Answer with any 2xx within 5 seconds; anything else is retried.
 
 For your own tests, `webhooks.sign(payload, secret, timestamp=None)` builds a valid header value.
 
@@ -196,21 +200,34 @@ For your own tests, `webhooks.sign(payload, secret, timestamp=None)` builds a va
 
 All errors derive from `midwater.MidwaterError`.
 
-| Exception | When |
-| --- | --- |
-| `AuthenticationError` | HTTP 401, or no usable API key at construction |
-| `ValidationError` | HTTP 400 (invalid JSON) or 422 (schema); see `.fields` |
-| `NotFoundError` | HTTP 404 |
-| `RateLimitError` | HTTP 429 (after retries) |
-| `ServerError` | HTTP 5xx (after retries) |
-| `APIError` | Any other error status; base class of the above |
-| `APIConnectionError` | No HTTP answer: DNS, refused connection, timeout |
-| `WaitTimeoutError` | `conversations.wait()` ran out of time |
-| `WebhookVerificationError` | `webhooks.verify()` rejected a delivery; see `.reason` |
+| Exception | When | `.type` |
+| --- | --- | --- |
+| `ValidationError` | HTTP 400 (invalid JSON) or 422 (schema); see `.fields` | `invalid_json`, `validation_error` |
+| `AuthenticationError` | HTTP 401, or no usable API key at construction | `authentication_error` |
+| `PermissionDeniedError` | HTTP 403 | `permission_denied` |
+| `NotFoundError` | HTTP 404 | `not_found` |
+| `RequestTimeoutError` | HTTP 408 (after retries) | |
+| `IdempotencyConflictError` | HTTP 409: the `Idempotency-Key` was used with a different body | `idempotency_conflict` |
+| `PayloadTooLargeError` | HTTP 413 | `payload_too_large` |
+| `RateLimitError` | HTTP 429 (after retries) | `rate_limited` |
+| `ServiceUnavailableError` | HTTP 503 (after retries); a `ServerError` | `service_unavailable` |
+| `ServerError` | Any other HTTP 5xx (after retries) | `server_error` |
+| `APIError` | Any other error status; base class of the above | |
+| `APIConnectionError` | No HTTP answer: DNS, refused connection, timeout | |
+| `WaitTimeoutError` | `conversations.wait()` ran out of time | |
+| `WebhookVerificationError` | `webhooks.verify()` rejected a delivery; see `.reason` | |
 
-Every `APIError` has `.status`, `.type` (for example `validation_error`), `.message`,
-`.fields` (validation messages by dotted path, such as `transcript.0.speaker`) and `.body` (the
-parsed JSON or raw text).
+`MidwaterError` itself is raised when no base URL is configured.
+
+The class is chosen from the HTTP status, never from `.type`, so an error type added to the API
+later never breaks your error handling.
+
+Every `APIError` has `.status`, `.type`, `.message`, `.fields` (validation messages by dotted
+path, such as `transcript.0.speaker`), `.body` (the parsed JSON or raw text) and `.request_id`.
+`.request_id` comes from `error.request_id` in the body, else the `Midwater-Request-Id`
+response header, else `None`. Both are **planned** on the server, so expect `None` for now;
+quote it to support once it appears. Successful responses carry the header's value on
+`.request_id` too (also `None` for now).
 
 ```python
 from midwater import ValidationError
@@ -222,18 +239,27 @@ except ValidationError as exc:
         print(path, messages)
 ```
 
-Exception messages and `repr(client)` never include your API key.
+Exception messages, log output and `repr(client)` never include your API key (a test turns on
+DEBUG logging for the SDK, `httpx` and `httpcore` and checks).
 
 ## Retries and idempotency
 
-The SDK retries up to `max_retries` times (default 2) on HTTP 429, 500, 502, 503, 504 and on
-connection errors, with exponential backoff and jitter (0.5 s, 1 s, 2 s ... capped at 8 s). A
-numeric `Retry-After` header is honoured. Other 4xx answers are never retried.
+The SDK retries HTTP 408, 429, every 5xx, and network errors (connection failures and
+timeouts), **only on calls that are safe to repeat**: the GETs (`conversations.get()`,
+`wait()`, `agents.health()`, `groups.health()`) and `conversations.create()`, which always
+carries an `Idempotency-Key`. `conversations.feedback()` is never retried (see
+[Feedback](#feedback)). Other 4xx answers are never retried.
 
-Sending a conversation is retried safely because it always carries an `Idempotency-Key`:
-**if you don't pass `idempotency_key`, the SDK generates one (a UUID4) for each `create()` call
-and reuses it across that call's retries.** A repeated key answers with the first response and
-`accepted.replayed` is `True`. The key used is on `accepted.idempotency_key`.
+`max_retries` defaults to 2 and is capped at 3: a larger value is treated as 3. Retries use
+exponential backoff with jitter (0.5 s, 1 s, 2 s, capped at 8 s). A numeric `Retry-After`
+header (seconds) is honoured, up to 60 s.
+
+Every POST carries an `Idempotency-Key`. **If you don't pass `idempotency_key`, the SDK
+generates one (a UUID4) for each call and reuses it across that call's retries.** A repeated
+key answers with the first response and `accepted.replayed` is `True`. The key used for a
+conversation is on `accepted.idempotency_key`. Two parts of this are planned on the server and
+not live yet: keys expiring after 24 hours, and answering `409 idempotency_conflict`
+(`IdempotencyConflictError`) when a key is reused with a different body.
 
 To make retries safe across processes or restarts too, pass your own key, for example your
 `external_id`:
@@ -271,7 +297,8 @@ Each API key belongs to one environment of one project:
 
 - `mw_test_...`: the **test** environment. Use it in development and CI.
 - `mw_live_...`: the **live** environment, for production traffic.
-- Keys made before October 2026 start `vk_test_` / `vk_live_` and keep working.
+
+Keys made before October 2026 start `vk_test_` / `vk_live_` and still work.
 
 Everything you send and read is scoped to the key's environment: a test key can't see live
 conversations, and health is measured separately per environment. The client checks the key's
@@ -282,33 +309,52 @@ Midwater key.
 
 ```python
 client = Midwater(
-    api_key=None,  # default: MIDWATER_API_KEY
-    base_url=None,  # default: MIDWATER_BASE_URL, then https://api.midwater.ai
+    api_key=None,  # required: pass it or set MIDWATER_API_KEY
+    base_url=None,  # required: pass it or set MIDWATER_BASE_URL
     timeout=30.0,  # seconds per request
-    max_retries=2,
+    max_retries=2,  # at most 3
     http_client=None,  # your own httpx.Client (AsyncMidwater: httpx.AsyncClient)
 )
 ```
 
-`https://api.midwater.ai` is a placeholder until the hosted API is deployed; it lives in one
-constant, `midwater.DEFAULT_BASE_URL`. If you pass `http_client`, its own timeout applies and
-the SDK won't close it.
+`base_url` is the base URL for your Midwater environment. There is no default host: without
+`base_url` or `MIDWATER_BASE_URL` the client raises `MidwaterError`. If you pass `http_client`,
+its own timeout applies and the SDK won't close it.
+
+## Versioning
+
+Every path is under `/v1`. Within `/v1` the API may add response fields and new values to
+enum-like fields (statuses, outcomes, check results, error types). The SDK passes both through
+instead of rejecting them, and your code should accept them too: treat an unknown value as
+"something new", and read new fields from `.raw` until the SDK names them.
 
 ## Development
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/ruff check .
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
 .venv/bin/mypy --strict src
-.venv/bin/pytest                 # unit tests
+sha256sum -c fixtures/SHA256SUMS  # macOS: shasum -a 256 -c fixtures/SHA256SUMS
+.venv/bin/pytest --cov=midwater --cov-report=term-missing --cov-fail-under=90  # unit tests
 .venv/bin/pytest -m contract     # live tests against a local Midwater stack
 .venv/bin/python -m build
 ```
 
-Contract tests read `MIDWATER_API_KEY` and `MIDWATER_BASE_URL` from the environment or from a
-git-ignored `.env.contract` (see `.env.example`). They only run against `localhost` and are
-skipped otherwise. The API contract lives in `openapi/midwater.yaml`.
+Contract tests read `MIDWATER_API_KEY` and `MIDWATER_BASE_URL` from the environment only, and
+are skipped when either is unset. They only run against `localhost`. The API contract lives in
+`openapi/midwater.yaml`.
+
+### Shared fixtures
+
+`fixtures/` holds JSON shared by every Midwater SDK: a conversation payload, the API's answers
+(`conversation.json`, `conversation-accepted.json`, `conversation-duplicate.json`,
+`feedback.json`, `agent-health.json`, `group-health.json`), every error type with its status
+(`errors.json`) and the webhook signature vectors (`webhook-vectors.json`). The unit tests mock
+the API with these files. They are generated in another repository and copied in unchanged;
+don't edit them here. `fixtures/SHA256SUMS` pins their checksums and the checksum of
+`openapi/midwater.yaml`: CI runs `sha256sum -c fixtures/SHA256SUMS`, and `tests/test_pins.py`
+fails if any pinned file drifts.
 
 ## Releasing
 
@@ -322,9 +368,9 @@ skipped otherwise. The API contract lives in `openapi/midwater.yaml`.
 3. Add that release workflow: on a published GitHub release (or a `v*` tag), build with
    `python -m build`, then upload with `pypa/gh-action-pypi-publish` using
    `permissions: id-token: write` in the `pypi` environment. Try it against TestPyPI first.
-4. Point `DEFAULT_BASE_URL` at the deployed API, bump `src/midwater/_version.py`, move the
-   `CHANGELOG.md` entry out of "Unreleased", and tag the release.
-5. Remove the "not published yet" note from this README.
+4. Bump `src/midwater/_version.py` if needed, move the `CHANGELOG.md` entry out of
+   "Unreleased", and tag the release.
+5. Remove the "unpublished" note from this README.
 
 The CI workflow in this repository only lints, type-checks, tests and builds; it never
 publishes.

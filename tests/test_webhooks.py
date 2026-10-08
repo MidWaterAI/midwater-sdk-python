@@ -1,20 +1,65 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import pytest
 
-from midwater import MidwaterError, WebhookVerificationError, webhooks
+import midwater
+from helpers import fixture
+from midwater import MidwaterError, WebhookVerificationError, verify_webhook, webhooks
 
-VECTORS: Dict[str, Any] = json.loads(
-    (Path(__file__).parent / "fixtures" / "webhook-vectors.json").read_text(encoding="utf-8")
-)
+VECTORS: Dict[str, Any] = fixture("webhook-vectors.json")
 SECRET: str = VECTORS["secret"]
 BODY: str = VECTORS["body"]
 NOW: int = VECTORS["now"]
 TOLERANCE: int = VECTORS["tolerance_seconds"]
+CASES: Dict[str, Dict[str, Any]] = {c["name"]: c for c in VECTORS["cases"]}
+
+
+def _verify(case: Dict[str, Any], secret: str = SECRET) -> Any:
+    body: str = case.get("body", BODY)
+    headers = {} if case["header"] is None else {"Midwater-Signature": case["header"]}
+    return verify_webhook(body, headers, secret, tolerance=TOLERANCE, now=NOW)
+
+
+def _reason(case: Dict[str, Any], secret: str = SECRET) -> Optional[str]:
+    with pytest.raises(WebhookVerificationError) as info:
+        _verify(case, secret)
+    return info.value.reason
+
+
+# ----------------------------------------------------------------------------- the five named cases
+
+
+def test_good_payload() -> None:
+    event = _verify(CASES["valid"])
+    assert event == json.loads(BODY)
+    assert event["type"] == "conversation.evaluated"
+
+
+def test_tampered_body() -> None:
+    assert _reason(CASES["tampered_body"]) == "invalid_signature"
+
+
+def test_wrong_secret() -> None:
+    # The vector's header was signed with a different secret.
+    assert _reason(CASES["wrong_secret"]) == "invalid_signature"
+    # And the good header fails when we verify with a different secret.
+    assert _reason(CASES["valid"], secret="whsec_not_the_right_secret") == "invalid_signature"
+
+
+def test_stale_timestamp() -> None:
+    assert _reason(CASES["stale_timestamp"]) == "stale_timestamp"
+
+
+def test_two_v1_values() -> None:
+    case = CASES["valid_with_rotated_second_v1"]
+    assert case["header"].count("v1=") == 2
+    assert _verify(case)["id"] == json.loads(BODY)["id"]
+
+
+# ----------------------------------------------------------------------------- every vector
 
 
 def test_vectors_cover_every_reason() -> None:
@@ -31,63 +76,44 @@ def test_vector(case: Dict[str, Any], as_bytes: bool) -> None:
     if case["valid"]:
         event = webhooks.verify(payload, headers, SECRET, tolerance=TOLERANCE, now=NOW)
         assert event == json.loads(body)
-        assert event["type"] == "conversation.evaluated"
     else:
         with pytest.raises(WebhookVerificationError) as info:
             webhooks.verify(payload, headers, SECRET, tolerance=TOLERANCE, now=NOW)
         assert info.value.reason == case["reason"]
 
 
-@pytest.mark.parametrize("case", VECTORS["cases"], ids=[c["name"] for c in VECTORS["cases"]])
-def test_vector_via_legacy_header(case: Dict[str, Any]) -> None:
-    body: str = case.get("body", BODY)
-    headers = {} if case["header"] is None else {"Verdict-Signature": case["header"]}
-    if case["valid"]:
-        webhooks.verify(body, headers, SECRET, tolerance=TOLERANCE, now=NOW)
-    else:
-        with pytest.raises(WebhookVerificationError) as info:
-            webhooks.verify(body, headers, SECRET, tolerance=TOLERANCE, now=NOW)
-        assert info.value.reason == case["reason"]
+def test_only_midwater_signature_header_is_read() -> None:
+    assert not hasattr(webhooks, "LEGACY_SIGNATURE_HEADER")
+    assert webhooks.__all__.count("SIGNATURE_HEADER") == 1
+    with pytest.raises(WebhookVerificationError) as info:
+        webhooks.verify(
+            BODY, {"X-Signature": CASES["valid"]["header"]}, SECRET, tolerance=TOLERANCE, now=NOW
+        )
+    assert info.value.reason == "missing_header"
+
+
+def test_verify_webhook_alias() -> None:
+    assert midwater.verify_webhook is webhooks.verify
 
 
 def test_header_lookup_is_case_insensitive() -> None:
-    header = VECTORS["cases"][0]["header"]
+    header = CASES["valid"]["header"]
     for name in ["midwater-signature", "MIDWATER-SIGNATURE", "Midwater-Signature"]:
         webhooks.verify(BODY, {name: header}, SECRET, tolerance=TOLERANCE, now=NOW)
 
 
-def test_midwater_header_wins_over_legacy() -> None:
-    good = VECTORS["cases"][0]["header"]
-    bad = "t=1791493920,v1=" + "0" * 64
-    webhooks.verify(
-        BODY,
-        {"Midwater-Signature": good, "Verdict-Signature": bad},
-        SECRET,
-        tolerance=TOLERANCE,
-        now=NOW,
-    )
-    with pytest.raises(WebhookVerificationError) as info:
-        webhooks.verify(
-            BODY,
-            {"Midwater-Signature": bad, "Verdict-Signature": good},
-            SECRET,
-            tolerance=TOLERANCE,
-            now=NOW,
-        )
-    assert info.value.reason == "invalid_signature"
-
-
 def test_no_secret() -> None:
-    header = VECTORS["cases"][0]["header"]
+    header = CASES["valid"]["header"]
     with pytest.raises(WebhookVerificationError) as info:
         webhooks.verify(BODY, {"Midwater-Signature": header}, "", now=NOW)
     assert info.value.reason == "no_secret"
+    with pytest.raises(WebhookVerificationError):
+        webhooks.sign(BODY, "")
 
 
 def test_wrong_length_v1_skipped() -> None:
-    good = VECTORS["cases"][0]["header"]
-    t, v1 = good.split(",")
-    header = f"{t},v1=abcd,{v1}"
+    t, v1 = CASES["valid"]["header"].split(",")
+    header = f"{t},v1=abcd,junk,{v1}"
     webhooks.verify(BODY, {"Midwater-Signature": header}, SECRET, tolerance=TOLERANCE, now=NOW)
 
 
@@ -99,7 +125,7 @@ def test_malformed_or_missing(header: str) -> None:
 
 
 def test_sign_matches_vector() -> None:
-    assert webhooks.sign(BODY, SECRET, timestamp=1791493920) == VECTORS["cases"][0]["header"]
+    assert webhooks.sign(BODY, SECRET, timestamp=1791493920) == CASES["valid"]["header"]
 
 
 def test_sign_round_trip_with_clock() -> None:
@@ -116,8 +142,9 @@ def test_tolerance_boundary() -> None:
         webhooks.verify(BODY, {"Midwater-Signature": header}, SECRET, tolerance=299, now=NOW)
 
 
-def test_signed_non_json_payload() -> None:
-    header = webhooks.sign("not json", SECRET, timestamp=NOW)
+@pytest.mark.parametrize("payload", ["not json", "[1, 2]"])
+def test_signed_payload_that_is_not_an_object(payload: str) -> None:
+    header = webhooks.sign(payload, SECRET, timestamp=NOW)
     with pytest.raises(MidwaterError) as info:
-        webhooks.verify("not json", {"Midwater-Signature": header}, SECRET, now=NOW)
+        webhooks.verify(payload, {"Midwater-Signature": header}, SECRET, now=NOW)
     assert not isinstance(info.value, WebhookVerificationError)

@@ -1,0 +1,29 @@
+{
+  "agent_id": "front-desk",
+  "name": "Front desk",
+  "environment": "live",
+  "health_status": "watch",
+  "reason": "Resolution 81% vs 87% 30-day baseline (−6 pts) since version 3.2.0",
+  "group": {
+    "id": "brightsmile-dental",
+    "name": "BrightSmile Dental"
+  },
+  "last_7_days": {
+    "conversations": 212,
+    "with_outcome": 180,
+    "resolution_rate": 0.81,
+    "handed_to_person_rate": 0.09,
+    "requests_for_person_not_honored": 2,
+    "avg_frustration": 0.22,
+    "compliance_failures": 0
+  },
+  "last_30_days": {
+    "conversations": 905,
+    "with_outcome": 774,
+    "resolution_rate": 0.87,
+    "handed_to_person_rate": 0.08,
+    "requests_for_person_not_honored": 5,
+    "avg_frustration": 0.19,
+    "compliance_failures": 1
+  }
+}

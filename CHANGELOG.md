@@ -6,15 +6,31 @@ All notable changes to the `midwater` package are listed here. The format follow
 
 ## [0.1.0] - Unreleased
 
+**Unpublished.** This version is not on PyPI.
+
 ### Added
 
-- `Midwater` (sync) and `AsyncMidwater` (async) clients on `httpx`.
+- `Midwater` (sync) and `AsyncMidwater` (async) clients on `httpx`. `api_key` and `base_url`
+  are both required (arguments, or `MIDWATER_API_KEY` and `MIDWATER_BASE_URL`); there is no
+  default host, and a missing base URL raises `MidwaterError`.
 - `conversations.create()`, `get()`, `wait()` and `feedback()`; `agents.health()`;
   `groups.health()`.
 - Typed request payloads (`ConversationCreate`, `FeedbackCreate`) and response models
   (`ConversationAccepted`, `Conversation`, `CheckResult`, `Feedback`, `AgentHealth`,
-  `GroupHealth`, `HealthWindow`, `WebhookEvent`).
-- Error classes mapped from HTTP status, with `.status`, `.type`, `.message`, `.fields`, `.body`.
-- Retries with exponential backoff and jitter on 429, 5xx and connection errors; automatic
-  `Idempotency-Key` for `conversations.create()`.
-- `webhooks.verify()` and `webhooks.sign()` for `Midwater-Signature`.
+  `GroupHealth`, `HealthWindow`, `WebhookEvent`). Unknown fields and enum values pass through.
+- Error classes mapped from HTTP status: `ValidationError` (400, 422), `AuthenticationError`
+  (401), `PermissionDeniedError` (403), `NotFoundError` (404), `RequestTimeoutError` (408),
+  `IdempotencyConflictError` (409), `PayloadTooLargeError` (413), `RateLimitError` (429),
+  `ServiceUnavailableError` (503, a `ServerError`), `ServerError` (other 5xx) and `APIError`
+  (anything else). Each has `.status`, `.type`, `.message`, `.fields`, `.body` and
+  `.request_id` (from `error.request_id` or the `Midwater-Request-Id` header; both planned
+  server-side). Successful responses expose `.request_id` too.
+- Retries on 408, 429, 5xx and network errors, only for calls that are safe to repeat (GETs
+  and `conversations.create()`), with exponential backoff, jitter and `Retry-After` (up to
+  60 s). `max_retries` defaults to 2 and is capped at 3.
+- An `Idempotency-Key` on every POST (generated UUID4 unless passed). `feedback()` takes an
+  `idempotency_key` but is never retried until the server honours the key on that endpoint.
+- `webhooks.verify()` (also `midwater.verify_webhook`) and `webhooks.sign()` for
+  `Midwater-Signature`.
+- Shared fixtures in `fixtures/`, pinned by `fixtures/SHA256SUMS` and checked in CI and by
+  `tests/test_pins.py`.
