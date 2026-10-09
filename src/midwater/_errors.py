@@ -111,6 +111,13 @@ class NotFoundError(APIError):
     """404: not found in the API key's environment."""
 
 
+class MethodNotAllowedError(APIError):
+    """405: the path doesn't support this method.
+
+    Planned as a JSON error with an ``Allow`` header listing the supported methods.
+    """
+
+
 class RequestTimeoutError(APIError):
     """408: the server timed out waiting for the request."""
 

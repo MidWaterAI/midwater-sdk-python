@@ -10,7 +10,7 @@ the result of every check, and each agent's health.
 - Automatic retries with backoff, only on calls that are safe to repeat
 - An `Idempotency-Key` on every POST
 - Webhook signature verification
-- Python 3.9+
+- Python 3.10 and later (3.9 reached end of life in October 2025)
 
 ## Install
 
@@ -97,6 +97,8 @@ Each check result has a `verdict` field, the check's result: `pass` (no problem 
 `not_met` for gating questions. `decided_by` says how it was reached: `rule` (from the events you
 sent), `model` (Midwater's model read the conversation), `llm_judge` (a second review for unclear
 conversations) or `human`.
+
+**Planned renames.** Three values are getting new names: `outcome` `escalated` → `handed_to_person`, `not_real_inquiry` → `not_customer_call`, and `decided_by` `llm_judge` → `second_review`. The SDK's types already accept both old and new names, so handle both until the change is announced; the field name `verdict` stays.
 
 Every response model keeps the decoded JSON in `.raw`, so newly added API fields are available
 before the SDK names them.
@@ -206,6 +208,7 @@ All errors derive from `midwater.MidwaterError`.
 | `AuthenticationError` | HTTP 401, or no usable API key at construction | `authentication_error` |
 | `PermissionDeniedError` | HTTP 403 | `permission_denied` |
 | `NotFoundError` | HTTP 404 | `not_found` |
+| `MethodNotAllowedError` | HTTP 405 (planned as JSON, with an `Allow` header) | `method_not_allowed` |
 | `RequestTimeoutError` | HTTP 408 (after retries) | |
 | `IdempotencyConflictError` | HTTP 409: the `Idempotency-Key` was used with a different body | `idempotency_conflict` |
 | `PayloadTooLargeError` | HTTP 413 | `payload_too_large` |

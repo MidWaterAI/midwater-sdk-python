@@ -121,5 +121,17 @@
       }
     },
     "status": 503
+  },
+  "method_not_allowed": {
+    "response": "MethodNotAllowed",
+    "planned": true,
+    "body": {
+      "error": {
+        "type": "method_not_allowed",
+        "message": "GET isn't supported here; use POST",
+        "request_id": "req_8Jx2kQ4mT9"
+      }
+    },
+    "status": 405
   }
 }

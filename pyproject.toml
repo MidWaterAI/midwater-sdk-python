@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Python SDK for the Midwater API: send AI-agent conversations, read check results and agent health, verify webhooks."
 readme = "README.md"
 license = { text = "MIT" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "Midwater", email = "hello@midwater.ai" }]
 keywords = ["midwater", "ai agents", "voice agents", "conversation quality", "monitoring"]
 classifiers = [
@@ -18,7 +18,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -80,11 +79,11 @@ files = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
-# The SDK supports Python 3.9: keep typing.Optional / Union / List / Dict, which also work
-# where annotations are evaluated at runtime.
+# The SDK supports Python 3.10 and later (3.9 reached end of life in October 2025). The code keeps
+# typing.Optional / Union / List / Dict for now; modernising them is a separate, cosmetic change.
 ignore = ["UP006", "UP007", "UP035", "UP045"]

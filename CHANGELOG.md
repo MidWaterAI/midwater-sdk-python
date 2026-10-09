@@ -4,6 +4,12 @@ All notable changes to the `midwater` package are listed here. The format follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Requires Python 3.10 or later (Python 3.9 reached end of life in October 2025). CI tests 3.10 and 3.13. 0.1.0 on PyPI still declares 3.9; the next release (0.1.1) carries the new floor.
+
 ## [0.1.0] - 2026-10-08
 
 **Unpublished.** This version is not on PyPI.

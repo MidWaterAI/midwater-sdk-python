@@ -18,7 +18,14 @@ info:
     least 6 months of overlap.
 
     **Errors.** Every error is JSON: `{ "error": { "type", "message", "fields"?, "request_id" } }`, with a fixed
-    list of types and status codes. Treat an unknown type by its status class.
+    list of types and status codes. Treat an unknown type by its status class. Planned: every `/v1` path answers
+    JSON errors, including unknown paths (`404 not_found`) and unsupported methods (`405 method_not_allowed`, with
+    an `Allow` header); today those two answer without a JSON body. Routes that aren't available yet answer
+    `501 not_implemented` with a link to the public docs.
+
+    **Planned renames.** Three values get new names (planned; both old and new are listed in the enums, and the
+    SDKs accept both): `decided_by` `llm_judge` → `second_review`; `outcome` `escalated` → `handed_to_person`;
+    `outcome` `not_real_inquiry` → `not_customer_call`. The field name `verdict` stays.
 
     **Pagination.** None in v1. When list endpoints arrive they are cursor-based: `limit` and `cursor` in,
     `{ "data", "next_cursor" }` out.
@@ -93,6 +100,7 @@ paths:
         "400": { $ref: "#/components/responses/InvalidJson" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/PermissionDenied" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
         "409": { $ref: "#/components/responses/IdempotencyConflict" }
         "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "422": { $ref: "#/components/responses/ValidationError" }
@@ -123,6 +131,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/ServerError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -163,6 +172,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
               example: { error: { type: not_found, message: No result for check no_such_check } }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
         "409": { $ref: "#/components/responses/IdempotencyConflict" }
         "422": { $ref: "#/components/responses/ValidationError" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -193,6 +203,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/ServerError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -221,6 +232,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/PermissionDenied" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/ServerError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -398,6 +410,10 @@ components:
       description: The request's ID, also in error bodies as `error.request_id`. Quote it when contacting support.
       x-status: planned
       schema: { type: string, example: req_8Jx2kQ4mT9 }
+    Allow:
+      description: The methods the path supports, e.g. `POST`.
+      x-status: planned
+      schema: { type: string, example: POST }
     RetryAfter:
       description: Seconds to wait before retrying.
       x-status: planned
@@ -493,6 +509,15 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
           example: { error: { type: service_unavailable, message: Midwater is briefly unavailable, request_id: req_8Jx2kQ4mT9 } }
+    MethodNotAllowed:
+      description: The path exists but doesn't support this method. `Allow` lists the methods it does support.
+      x-status: planned
+      headers:
+        Allow: { $ref: "#/components/headers/Allow" }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { type: method_not_allowed, message: "GET isn't supported here; use POST", request_id: req_8Jx2kQ4mT9 } }
   examples:
     ConversationCreate:
       summary: A finished voice call
@@ -582,11 +607,11 @@ components:
               type: string
               description: |
                 Stable machine-readable type. Each has a set status: `invalid_json` 400, `authentication_error` 401,
-                `permission_denied` 403, `not_found` 404, `idempotency_conflict` 409, `payload_too_large` 413,
+                `permission_denied` 403, `not_found` 404, `method_not_allowed` 405, `idempotency_conflict` 409, `payload_too_large` 413,
                 `validation_error` 422, `rate_limited` 429, `server_error` 500, `service_unavailable` 503.
                 Types not yet returned are planned. Treat a type you don't know by its status class.
-              enum: [invalid_json, authentication_error, permission_denied, not_found, idempotency_conflict, payload_too_large, validation_error, rate_limited, server_error, service_unavailable]
-              x-planned-values: [permission_denied, idempotency_conflict, payload_too_large, rate_limited, service_unavailable]
+              enum: [invalid_json, authentication_error, permission_denied, not_found, method_not_allowed, idempotency_conflict, payload_too_large, validation_error, rate_limited, server_error, service_unavailable]
+              x-planned-values: [permission_denied, method_not_allowed, idempotency_conflict, payload_too_large, rate_limited, service_unavailable]
             message: { type: string, description: Human-readable; may change. }
             fields:
               type: object
@@ -669,11 +694,14 @@ components:
         duplicate: { type: boolean, description: "Present and `true` when the `external_id` already existed." }
     Outcome:
       type: ["string", "null"]
-      enum: [resolved, unresolved, escalated, not_real_inquiry, null]
+      enum: [resolved, unresolved, escalated, not_real_inquiry, handed_to_person, not_customer_call, null]
+      x-planned-values: [handed_to_person, not_customer_call]
       description: |
         How the conversation ended for the caller. `resolved`: Resolved. `unresolved`: Unresolved.
         `escalated`: Handed to a person. `not_real_inquiry`: Not a customer call (sales, spam, wrong number),
         kept out of resolution rates. `null` while scoring, or when no outcome check applied.
+        Planned renames: `escalated` becomes `handed_to_person` and `not_real_inquiry` becomes `not_customer_call`;
+        accept both until the change is announced in the changelog.
     CheckResultValue:
       type: string
       enum: [pass, fail, uncertain, not_applicable, met, not_met]
@@ -683,8 +711,9 @@ components:
         (for example, whether this was a real customer inquiry).
     DecidedBy:
       type: ["string", "null"]
-      enum: [rule, model, llm_judge, human, null]
-      description: "`rule`: decided from the events you sent. `model`: Midwater's model read the whole conversation. `llm_judge`: a second review for unclear conversations. `human`: someone on your team."
+      enum: [rule, model, llm_judge, second_review, human, null]
+      x-planned-values: [second_review]
+      description: "`rule`: decided from the events you sent. `model`: Midwater's model read the whole conversation. `llm_judge`: a second review for unclear conversations (planned rename: `second_review`; accept both). `human`: someone on your team."
     CheckResult:
       type: object
       required: [check_key, check_version, check_status, verdict, scorer_version]

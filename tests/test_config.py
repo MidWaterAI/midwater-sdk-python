@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 import midwater
-from helpers import API_KEY, BASE_URL
+from helpers import API_KEY, BASE_URL, fixture
 from midwater import AsyncMidwater, AuthenticationError, Midwater, MidwaterError
 
 
@@ -152,3 +152,23 @@ def test_max_retries_clamped(given: int, used: int) -> None:
     client = Midwater(api_key=API_KEY, base_url=BASE_URL, max_retries=given)
     assert client.max_retries == used
     client.close()
+
+
+def test_planned_value_renames_are_accepted() -> None:
+    """Old and new names both parse until the rename lands (PM review 48, A7)."""
+    from typing import get_args
+
+    from midwater.types import Conversation, DecidedBy, Outcome
+
+    outcomes = {a for t in get_args(Outcome) for a in get_args(t)}
+    assert {"escalated", "handed_to_person", "not_real_inquiry", "not_customer_call"} <= outcomes
+    deciders = {a for t in get_args(DecidedBy) for a in get_args(t)}
+    assert {"llm_judge", "second_review"} <= deciders
+
+    raw = fixture("conversation.json")
+    for outcome in ("handed_to_person", "not_customer_call", "escalated", "not_real_inquiry"):
+        body = {**raw, "outcome": outcome}
+        body["results"] = [{**raw["results"][0], "decided_by": "second_review"}]
+        conv = Conversation.from_dict(body)
+        assert conv.outcome == outcome
+        assert conv.results[0].decided_by == "second_review"

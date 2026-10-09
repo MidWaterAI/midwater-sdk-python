@@ -49,9 +49,20 @@ Channel = Literal["voice", "chat"]
 Speaker = Literal["agent", "user", "human_agent"]
 EndedBy = Literal["agent", "caller", "user", "human_agent", "timeout", "system"]
 ConversationStatus = Literal["queued", "evaluating", "done", "failed"]
-Outcome = Optional[Literal["resolved", "unresolved", "escalated", "not_real_inquiry"]]
+# Planned renames (accept both until announced): escalated -> handed_to_person,
+# not_real_inquiry -> not_customer_call, llm_judge -> second_review.
+Outcome = Optional[
+    Literal[
+        "resolved",
+        "unresolved",
+        "escalated",
+        "not_real_inquiry",
+        "handed_to_person",
+        "not_customer_call",
+    ]
+]
 CheckResultValue = Literal["pass", "fail", "uncertain", "not_applicable", "met", "not_met"]
-DecidedBy = Optional[Literal["rule", "model", "llm_judge", "human"]]
+DecidedBy = Optional[Literal["rule", "model", "llm_judge", "second_review", "human"]]
 HealthStatus = Literal["healthy", "watch", "at_risk", "not_enough_calls"]
 Environment = Literal["test", "live"]
 FeedbackValue = Literal["pass", "fail"]
@@ -221,7 +232,7 @@ class CheckResult:
     this problem), ``uncertain`` (a person should look), ``not_applicable``, or ``met`` /
     ``not_met`` for gating questions. ``decided_by`` says how it was reached: ``rule`` (from
     the events you sent), ``model`` (Midwater's model read the conversation), ``llm_judge``
-    (a second review for unclear conversations) or ``human``.
+    (a second review for unclear conversations; planned rename ``second_review``) or ``human``.
     """
 
     check_key: str
