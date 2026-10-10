@@ -172,3 +172,12 @@ def test_planned_value_renames_are_accepted() -> None:
         conv = Conversation.from_dict(body)
         assert conv.outcome == outcome
         assert conv.results[0].decided_by == "second_review"
+
+
+def test_scorer_version_may_be_null() -> None:
+    """The spec allows null when nothing scored a result; it must not become the string "None"."""
+    from midwater.types import CheckResult
+
+    raw = fixture("conversation.json")["results"][0]
+    assert CheckResult.from_dict({**raw, "scorer_version": None}).scorer_version is None
+    assert CheckResult.from_dict(raw).scorer_version == raw["scorer_version"]

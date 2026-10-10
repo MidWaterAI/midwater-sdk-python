@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Midwater API",
-    "version": "v1",
+    "version": "v1.0.1",
     "summary": "Send each finished AI-agent conversation to Midwater and read back its outcome, check results and agent health.",
     "description": "Midwater checks every conversation your AI agents have, voice calls and chats. Send each finished\nconversation with its transcript; Midwater scores it in the background and you read the outcome,\nthe result of every check, and each agent's health.\n\n**Authentication.** Every request carries `Authorization: Bearer <key>`. A key belongs to one environment\nof one project: test keys start `mw_test_`, live keys `mw_live_`. Keys made before October 2026 start `vk_` and still work.\n\n**Base URL.** A variable: use the base URL for your Midwater environment. There is no default host.\n\n**Versioning.** The version is in the path (`/v1`). Adding fields, endpoints, event types or enum values\ndoesn't change the version, so accept values you don't recognise. A breaking change gets `/v2`, with at\nleast 6 months of overlap.\n\n**Errors.** Every error is JSON: `{ \"error\": { \"type\", \"message\", \"fields\"?, \"request_id\" } }`, with a fixed\nlist of types and status codes. Treat an unknown type by its status class. Planned: every `/v1` path answers\nJSON errors, including unknown paths (`404 not_found`) and unsupported methods (`405 method_not_allowed`, with\nan `Allow` header); today those two answer without a JSON body. Routes that aren't available yet answer\n`501 not_implemented` with a link to the public docs.\n\n**Planned renames.** Three values get new names (planned; both old and new are listed in the enums, and the\nSDKs accept both): `decided_by` `llm_judge` → `second_review`; `outcome` `escalated` → `handed_to_person`;\n`outcome` `not_real_inquiry` → `not_customer_call`. The field name `verdict` stays.\n\n**Pagination.** None in v1. When list endpoints arrive they are cursor-based: `limit` and `cursor` in,\n`{ \"data\", \"next_cursor\" }` out.\n\n**Planned behaviour.** Anything marked `x-status: planned` is agreed but not yet built. Don't rely on it yet.\nEach operation's `x-midwater-verified` is the date it was last checked against a running Midwater stack.\n",
     "contact": {
@@ -12,14 +12,8 @@
   },
   "servers": [
     {
-      "url": "{baseUrl}",
-      "description": "The base URL for your Midwater environment. A variable everywhere; no default host until launch.",
-      "variables": {
-        "baseUrl": {
-          "default": "MIDWATER_BASE_URL",
-          "description": "Set to your Midwater base URL (the docs and SDKs read it from MIDWATER_BASE_URL)."
-        }
-      }
+      "url": "https://api.midwater.ai",
+      "description": "Midwater's API. Test and live are chosen by the key (mw_test_… or mw_live_…), not by the host."
     }
   ],
   "security": [
@@ -1685,8 +1679,11 @@
             "description": "The transcript turns the result points to."
           },
           "scorer_version": {
-            "type": "string",
-            "description": "Midwater's opaque version of how the result was scored, e.g. `2026-10-06.3`."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Midwater's opaque version of how the result was scored, e.g. `2026-10-06.3`. `null` when nothing scored the result (a check that didn't apply, or wasn't evaluated)."
           },
           "latency_ms": {
             "type": [

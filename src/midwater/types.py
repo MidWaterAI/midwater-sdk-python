@@ -239,7 +239,8 @@ class CheckResult:
     check_version: int
     check_status: str
     verdict: CheckResultValue
-    scorer_version: str
+    # Midwater's opaque scoring version, e.g. "2026-10-06.3"; None when nothing scored the result.
+    scorer_version: Optional[str]
     check_name: Optional[str] = None
     score: Optional[float] = None
     choice: Optional[str] = None
@@ -256,7 +257,7 @@ class CheckResult:
             check_version=int(data.get("check_version", 0)),
             check_status=str(data.get("check_status", "")),
             verdict=data["verdict"],
-            scorer_version=str(data.get("scorer_version", "")),
+            scorer_version=_opt_str(data.get("scorer_version")),
             check_name=_opt_str(data.get("check_name")),
             score=_opt_float(data.get("score")),
             choice=_opt_str(data.get("choice")),
