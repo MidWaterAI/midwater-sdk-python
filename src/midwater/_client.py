@@ -53,11 +53,10 @@ def _monotonic() -> float:
     return time.monotonic()
 
 
-# Feedback is never retried, not even after a 429 or a network error. The API asks for an
-# Idempotency-Key on every POST, so the SDK sends one, but de-duplicating feedback by that key
-# is still planned on the server (x-status: planned on this endpoint). Until the server honours
-# it, a retry could store the same label twice. Flip this once it does.
-_FEEDBACK_RETRYABLE = False
+# Feedback is retried like create: the SDK sends one Idempotency-Key per call and reuses it on
+# its retries, and the API honours keys on every POST (API 1.2.0), so a retry never stores a
+# label twice.
+_FEEDBACK_RETRYABLE = True
 
 
 def _feedback_body(check_key: str, verdict: FeedbackValue, note: Optional[str]) -> FeedbackCreate:
@@ -176,8 +175,9 @@ class Conversations:
     ) -> Feedback:
         """Confirm (``pass``) or correct (``fail``) one check's result on one conversation.
 
-        Every POST carries an ``Idempotency-Key`` (a generated UUID4 unless you pass one).
-        The SDK never retries this call; see ``_FEEDBACK_RETRYABLE``.
+        Every POST carries an ``Idempotency-Key`` (a generated UUID4 unless you pass one), reused
+        on retries; the API honours it, so a retry never records the answer twice. ``replayed`` is
+        true when the answer is a replay of an earlier request with the same key.
         """
         path = f"/v1/conversations/{_base.path_segment(id)}/feedback"
         response = self._client._request(
@@ -187,7 +187,10 @@ class Conversations:
             idempotency_key=_new_idempotency_key(idempotency_key),
             retryable=_FEEDBACK_RETRYABLE,
         )
-        return _with_request_id(Feedback.from_dict(_base.parse_json(response)), response)
+        return _with_request_id(
+            Feedback.from_dict(_base.parse_json(response), replayed=_base.is_replayed(response)),
+            response,
+        )
 
 
 class Agents:
@@ -341,7 +344,7 @@ class AsyncConversations:
         note: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> Feedback:
-        """Confirm or correct one check's result. Sends an ``Idempotency-Key``; never retried."""
+        """Confirm or correct one check's result; idempotent, retried like ``create``."""
         path = f"/v1/conversations/{_base.path_segment(id)}/feedback"
         response = await self._client._request(
             "POST",
@@ -350,7 +353,10 @@ class AsyncConversations:
             idempotency_key=_new_idempotency_key(idempotency_key),
             retryable=_FEEDBACK_RETRYABLE,
         )
-        return _with_request_id(Feedback.from_dict(_base.parse_json(response)), response)
+        return _with_request_id(
+            Feedback.from_dict(_base.parse_json(response), replayed=_base.is_replayed(response)),
+            response,
+        )
 
 
 class AsyncAgents:

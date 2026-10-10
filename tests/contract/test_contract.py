@@ -11,6 +11,7 @@ import pytest
 from midwater import (
     AsyncMidwater,
     AuthenticationError,
+    IdempotencyConflictError,
     Midwater,
     NotFoundError,
     ValidationError,
@@ -198,6 +199,27 @@ def test_feedback(client: Midwater, scored: Conversation) -> None:
     assert fb.check_key == check_key
     assert fb.verdict == "pass"
     assert fb.id
+
+
+def test_feedback_idempotency(client: Midwater, scored: Conversation) -> None:
+    """API 1.2.0: the same key replays; the same key with a different body is a conflict."""
+    check_key = scored.results[0].check_key
+    key = f"py-fb-{uuid.uuid4()}"
+    first = client.conversations.feedback(scored.id, check_key, "fail", idempotency_key=key)
+    again = client.conversations.feedback(scored.id, check_key, "fail", idempotency_key=key)
+    assert again.replayed is True
+    assert again.id == first.id
+    with pytest.raises(IdempotencyConflictError):
+        client.conversations.feedback(scored.id, check_key, "pass", idempotency_key=key)
+
+
+def test_create_key_reused_for_different_body_conflicts(
+    client: Midwater, created: Dict[str, Any]
+) -> None:
+    with pytest.raises(IdempotencyConflictError):
+        client.conversations.create(
+            make_payload(f"{created['external_id']}-other"), idempotency_key=created["key"]
+        )
 
 
 def test_feedback_unknown_check_is_not_found(client: Midwater, scored: Conversation) -> None:

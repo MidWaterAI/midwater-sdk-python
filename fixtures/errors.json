@@ -65,11 +65,11 @@
   },
   "idempotency_conflict": {
     "response": "IdempotencyConflict",
-    "planned": true,
+    "planned": false,
     "body": {
       "error": {
         "type": "idempotency_conflict",
-        "message": "This Idempotency-Key was used with a different body",
+        "message": "This Idempotency-Key was already used for a different request. Use a new key for a new request.",
         "request_id": "req_8Jx2kQ4mT9"
       }
     },

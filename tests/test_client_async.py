@@ -119,15 +119,18 @@ async def test_feedback_and_health(make_async_client: MakeClient) -> None:
     assert rec.requests[0].headers["idempotency-key"] == "f1"
 
 
-async def test_feedback_generates_key_and_is_never_retried(
+async def test_feedback_generates_key_and_retries_with_it(
     make_async_client: MakeClient, sleeps: List[float]
 ) -> None:
-    client, rec = make_async_client([json_response(429, error_json("rate_limited"))])
-    with pytest.raises(RateLimitError):
-        await client.conversations.feedback("c", "k", "pass")
-    assert len(rec.requests) == 1
+    client, rec = make_async_client(
+        [json_response(429, error_json("rate_limited")), json_response(200, FEEDBACK)]
+    )
+    fb = await client.conversations.feedback("c", "k", "pass")
+    assert fb.replayed is False
+    assert len(rec.requests) == 2
     uuid.UUID(rec.requests[0].headers["idempotency-key"])
-    assert sleeps == []
+    assert rec.requests[0].headers["idempotency-key"] == rec.requests[1].headers["idempotency-key"]
+    assert len(sleeps) == 1
 
 
 @pytest.mark.parametrize("error_type", sorted(ERRORS))

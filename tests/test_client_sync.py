@@ -506,21 +506,38 @@ def test_max_retries_zero(make_client: MakeClient, sleeps: List[float]) -> None:
 
 
 @pytest.mark.parametrize("status", [408, 429, 500, 503])
-def test_feedback_never_retried(make_client: MakeClient, sleeps: List[float], status: int) -> None:
-    client, rec = make_client([json_response(status, SERVER_ERROR)])
-    with pytest.raises(APIError):
-        client.conversations.feedback("c1", "k", "pass")
-    assert len(rec.requests) == 1
-    assert sleeps == []
+def test_feedback_retried_with_the_same_key(
+    make_client: MakeClient, sleeps: List[float], status: int
+) -> None:
+    client, rec = make_client([json_response(status, SERVER_ERROR), json_response(200, FEEDBACK)])
+    fb = client.conversations.feedback("c1", "k", "pass")
+    assert fb.replayed is False
+    assert len(rec.requests) == 2
+    keys = {r.headers["idempotency-key"] for r in rec.requests}
+    assert len(keys) == 1
+    assert len(sleeps) == 1
 
 
-def test_feedback_not_retried_on_connection_error(
+def test_feedback_retried_after_connection_error(
     make_client: MakeClient, sleeps: List[float]
 ) -> None:
-    client, rec = make_client([httpx.ConnectError("refused")])
-    with pytest.raises(APIConnectionError):
-        client.conversations.feedback("c1", "k", "pass")
-    assert len(rec.requests) == 1
+    client, rec = make_client([httpx.ConnectError("refused"), json_response(200, FEEDBACK)])
+    assert client.conversations.feedback("c1", "k", "pass").id == FEEDBACK["id"]
+    assert len(rec.requests) == 2
+
+
+def test_feedback_replayed_and_conflict(make_client: MakeClient, sleeps: List[float]) -> None:
+    client, rec = make_client(
+        [
+            json_response(200, FEEDBACK, headers={"Idempotent-Replayed": "true"}),
+            json_response(409, error_json("idempotency_conflict")),
+        ]
+    )
+    assert client.conversations.feedback("c1", "k", "pass", idempotency_key="fb-1").replayed is True
+    with pytest.raises(IdempotencyConflictError):
+        client.conversations.feedback("c1", "k", "fail", idempotency_key="fb-1")
+    assert len(rec.requests) == 2
+    assert sleeps == []
 
 
 def test_health_retried(make_client: MakeClient, sleeps: List[float]) -> None:
