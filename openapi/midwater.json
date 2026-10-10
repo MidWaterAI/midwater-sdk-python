@@ -1,0 +1,2369 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Midwater API",
+    "version": "v1.0.1",
+    "summary": "Send each finished AI-agent conversation to Midwater and read back its outcome, check results and agent health.",
+    "description": "Midwater checks every conversation your AI agents have, voice calls and chats. Send each finished\nconversation with its transcript; Midwater scores it in the background and you read the outcome,\nthe result of every check, and each agent's health.\n\n**Authentication.** Every request carries `Authorization: Bearer <key>`. A key belongs to one environment\nof one project: test keys start `mw_test_`, live keys `mw_live_`. Keys made before October 2026 start `vk_` and still work.\n\n**Base URL.** A variable: use the base URL for your Midwater environment. There is no default host.\n\n**Versioning.** The version is in the path (`/v1`). Adding fields, endpoints, event types or enum values\ndoesn't change the version, so accept values you don't recognise. A breaking change gets `/v2`, with at\nleast 6 months of overlap.\n\n**Errors.** Every error is JSON: `{ \"error\": { \"type\", \"message\", \"fields\"?, \"request_id\" } }`, with a fixed\nlist of types and status codes. Treat an unknown type by its status class. Planned: every `/v1` path answers\nJSON errors, including unknown paths (`404 not_found`) and unsupported methods (`405 method_not_allowed`, with\nan `Allow` header); today those two answer without a JSON body. Routes that aren't available yet answer\n`501 not_implemented` with a link to the public docs.\n\n**Planned renames.** Three values get new names (planned; both old and new are listed in the enums, and the\nSDKs accept both): `decided_by` `llm_judge` → `second_review`; `outcome` `escalated` → `handed_to_person`;\n`outcome` `not_real_inquiry` → `not_customer_call`. The field name `verdict` stays.\n\n**Pagination.** None in v1. When list endpoints arrive they are cursor-based: `limit` and `cursor` in,\n`{ \"data\", \"next_cursor\" }` out.\n\n**Planned behaviour.** Anything marked `x-status: planned` is agreed but not yet built. Don't rely on it yet.\nEach operation's `x-midwater-verified` is the date it was last checked against a running Midwater stack.\n",
+    "contact": {
+      "name": "Midwater",
+      "email": "hello@midwater.ai"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.midwater.ai",
+      "description": "Midwater's API. Test and live are chosen by the key (mw_test_… or mw_live_…), not by the host."
+    }
+  ],
+  "security": [
+    {
+      "apiKey": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Conversations",
+      "description": "Send finished conversations and read their results."
+    },
+    {
+      "name": "Health",
+      "description": "Agent and group health, measured per environment."
+    }
+  ],
+  "paths": {
+    "/v1/conversations": {
+      "post": {
+        "tags": [
+          "Conversations"
+        ],
+        "operationId": "createConversation",
+        "summary": "Send a finished conversation",
+        "description": "Stores a finished call or chat and queues it for scoring. Answers `202` with `status: \"queued\"`;\nread the result with `GET /v1/conversations/{id}` or wait for the `conversation.evaluated` webhook.\n\nSending an `external_id` that already exists in this environment answers `200` with the existing\nconversation and `duplicate: true`; nothing new is created.\n\nSend an `Idempotency-Key` header to make retries safe: a repeated key in the same environment\nanswers with the first response and `Idempotent-Replayed: true`.\n\nA conversation without `agent.id` goes to the project's Default agent (ID `default`). A new\n`agent.id` creates the agent the first time it's seen.\n",
+        "x-midwater-verified": "2026-10-08",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationCreate"
+              },
+              "examples": {
+                "default": {
+                  "$ref": "#/components/examples/ConversationCreate"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A conversation with this `external_id` already exists in this environment; it is returned instead of a duplicate.",
+            "headers": {
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/IdempotentReplayed"
+              },
+              "Midwater-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationAccepted"
+                },
+                "example": {
+                  "id": "cmv0187nm005po3016rag4dcg",
+                  "status": "done",
+                  "duplicate": true
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted and queued for scoring.",
+            "headers": {
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/IdempotentReplayed"
+              },
+              "Midwater-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationAccepted"
+                },
+                "example": {
+                  "id": "cmv0187nm005po3016rag4dcg",
+                  "status": "queued"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidJson"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotencyConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/conversations/{id}": {
+      "get": {
+        "tags": [
+          "Conversations"
+        ],
+        "operationId": "getConversation",
+        "summary": "Get a conversation and its results",
+        "description": "Returns the conversation, its scoring `status`, its `outcome` and the result of every check.\n`id` is Midwater's ID or your `external_id`. Results appear once `status` is `done`.\n",
+        "x-midwater-verified": "2026-10-08",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConversationId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The conversation.",
+            "headers": {
+              "Midwater-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "#/components/examples/Conversation"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/conversations/{id}/feedback": {
+      "post": {
+        "tags": [
+          "Conversations"
+        ],
+        "operationId": "createFeedback",
+        "summary": "Confirm or correct a check result",
+        "description": "Records your team's answer for one check on one conversation (stored as a label with source `api`).\n`id` is Midwater's ID or your `external_id`. Today each call adds a label; idempotency keys on this\nendpoint are planned.\n",
+        "x-midwater-verified": "2026-10-08",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConversationId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKeyPlanned"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackCreate"
+              },
+              "example": {
+                "check_key": "need_unresolved",
+                "verdict": "fail",
+                "note": "Caller hung up before the booking went through."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The label was stored.",
+            "headers": {
+              "Midwater-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Feedback"
+                },
+                "example": {
+                  "id": "cmv0189as006no301jmgcwibw",
+                  "check_key": "need_unresolved",
+                  "verdict": "fail",
+                  "source": "api"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidJson"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "description": "No such conversation, or the conversation has no result for `check_key` (`\"No result for check <key>\"`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": {
+                    "type": "not_found",
+                    "message": "No result for check no_such_check"
+                  }
+                }
+              }
+            }
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "409": {
+            "$ref": "#/components/responses/IdempotencyConflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/agents/{agent_id}/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "operationId": "getAgentHealth",
+        "summary": "Get an agent's health",
+        "description": "The agent's health in the key's environment, with 7- and 30-day windows. `agent_id` is the `agent.id` you send (or `default`).",
+        "x-midwater-verified": "2026-10-08",
+        "parameters": [
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SafeId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agent's health.",
+            "headers": {
+              "Midwater-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentHealth"
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "#/components/examples/AgentHealth"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/v1/groups/{group_id}/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "operationId": "getGroupHealth",
+        "summary": "Get a group's health",
+        "description": "The worst status among the group's active agents, each agent's status, and totals across them, in the key's environment.",
+        "x-midwater-verified": "2026-10-08",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/SafeId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The group's health.",
+            "headers": {
+              "Midwater-Request-Id": {
+                "$ref": "#/components/headers/RequestId"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupHealth"
+                },
+                "examples": {
+                  "default": {
+                    "$ref": "#/components/examples/GroupHealth"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/PermissionDenied"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "405": {
+            "$ref": "#/components/responses/MethodNotAllowed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    }
+  },
+  "x-midwater-webhook-delivery": {
+    "description": "How deliveries are retried. Integrators dedupe on `Midwater-Delivery`.",
+    "current": "Any 2xx within 5 seconds is delivered. Otherwise 3 retries, about 2, 8 and 30 seconds after the first attempt, then the delivery is marked failed.",
+    "planned": {
+      "x-status": "planned",
+      "description": "8 attempts over about 24 hours, with exponential backoff."
+    }
+  },
+  "webhooks": {
+    "conversation.evaluated": {
+      "post": {
+        "operationId": "webhookConversationEvaluated",
+        "summary": "A conversation was scored",
+        "description": "Sent to webhook destinations when scoring finishes.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MidwaterSignature"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterEvent"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterDelivery"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/WebhookEnvelope"
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "conversation.evaluated"
+                      },
+                      "data": {
+                        "$ref": "#/components/schemas/ConversationEvaluatedData"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Any 2xx within 5 seconds marks the delivery as delivered. Anything else, or no answer in time, is retried: today 3 retries about 2, 8 and 30 seconds apart; planned: 8 attempts over about 24 hours."
+          }
+        }
+      }
+    },
+    "check.failed": {
+      "post": {
+        "operationId": "webhookCheckFailed",
+        "summary": "A check failed",
+        "description": "Sent by a route (Routes & destinations in the app) when an active check matching the route fails on a covered agent.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MidwaterSignature"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterEvent"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterDelivery"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/WebhookEnvelope"
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "check.failed"
+                      },
+                      "data": {
+                        "$ref": "#/components/schemas/CheckFailedData"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Any 2xx within 5 seconds marks the delivery as delivered. Anything else, or no answer in time, is retried: today 3 retries about 2, 8 and 30 seconds apart; planned: 8 attempts over about 24 hours."
+          }
+        }
+      }
+    },
+    "check.failed.digest": {
+      "post": {
+        "operationId": "webhookCheckFailedDigest",
+        "summary": "Hourly digest of failed checks",
+        "description": "Sent instead of individual `check.failed` events by a route set to deliver as an hourly digest.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MidwaterSignature"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterEvent"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterDelivery"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/WebhookEnvelope"
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "check.failed.digest"
+                      },
+                      "data": {
+                        "type": "object",
+                        "required": [
+                          "count",
+                          "items"
+                        ],
+                        "properties": {
+                          "count": {
+                            "type": "integer"
+                          },
+                          "items": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/CheckFailedData"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Any 2xx within 5 seconds marks the delivery as delivered. Anything else, or no answer in time, is retried: today 3 retries about 2, 8 and 30 seconds apart; planned: 8 attempts over about 24 hours."
+          }
+        }
+      }
+    },
+    "agent.health_changed": {
+      "post": {
+        "operationId": "webhookAgentHealthChanged",
+        "summary": "An agent's health changed",
+        "description": "Sent when an agent's status changes and `watch` or `at_risk` is the old or new status. Becoming measured as healthy, or going quiet, sends nothing.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MidwaterSignature"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterEvent"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterDelivery"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/WebhookEnvelope"
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "agent.health_changed"
+                      },
+                      "data": {
+                        "$ref": "#/components/schemas/AgentHealthChangedData"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Any 2xx within 5 seconds marks the delivery as delivered. Anything else, or no answer in time, is retried: today 3 retries about 2, 8 and 30 seconds apart; planned: 8 attempts over about 24 hours."
+          }
+        }
+      }
+    },
+    "group.health_changed": {
+      "post": {
+        "operationId": "webhookGroupHealthChanged",
+        "summary": "A group's health changed",
+        "description": "Sent when a group's status changes and `watch` or `at_risk` is the old or new status.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MidwaterSignature"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterEvent"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterDelivery"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/WebhookEnvelope"
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "group.health_changed"
+                      },
+                      "data": {
+                        "$ref": "#/components/schemas/GroupHealthChangedData"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Any 2xx within 5 seconds marks the delivery as delivered. Anything else, or no answer in time, is retried: today 3 retries about 2, 8 and 30 seconds apart; planned: 8 attempts over about 24 hours."
+          }
+        }
+      }
+    },
+    "test": {
+      "post": {
+        "operationId": "webhookTest",
+        "summary": "Test event",
+        "description": "Sent when someone presses \"Send test event\" on a destination in the app.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/MidwaterSignature"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterEvent"
+          },
+          {
+            "$ref": "#/components/parameters/MidwaterDelivery"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/WebhookEnvelope"
+                  },
+                  {
+                    "properties": {
+                      "type": {
+                        "const": "test"
+                      },
+                      "data": {
+                        "type": "object",
+                        "properties": {
+                          "message": {
+                            "type": "string",
+                            "example": "This is a test event from Midwater."
+                          },
+                          "destination": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri"
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "2XX": {
+            "description": "Any 2xx within 5 seconds marks the delivery as delivered. Anything else, or no answer in time, is retried: today 3 retries about 2, 8 and 30 seconds apart; planned: 8 attempts over about 24 hours."
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API key: `mw_test_…` for the test environment, `mw_live_…` for live."
+      }
+    },
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "description": "Any string unique to this request, for example your `external_id`. A repeated key in the same environment\nanswers with the first response and `Idempotent-Replayed: true`. Planned (`x-status: planned`): keys\nexpire after 24 hours, and reusing a key with a different body answers `409 idempotency_conflict`.\nToday keys don't expire and bodies aren't compared.\n",
+        "x-planned": "24-hour expiry; 409 idempotency_conflict on a different body",
+        "schema": {
+          "type": "string",
+          "maxLength": 255
+        }
+      },
+      "IdempotencyKeyPlanned": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "x-status": "planned",
+        "description": "Planned for every `POST`. Accepted today but not yet honoured on this endpoint, so don't retry it blindly.",
+        "schema": {
+          "type": "string",
+          "maxLength": 255
+        }
+      },
+      "ConversationId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "Midwater's conversation ID or your `external_id`.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "MidwaterSignature": {
+        "name": "Midwater-Signature",
+        "in": "header",
+        "required": true,
+        "description": "`t=<unix seconds>,v1=<hex>`: HMAC-SHA256 of `<t>.<raw body>` keyed with the environment's signing secret (`whsec_…`). Verify with a 5-minute tolerance and a constant-time compare, and accept the delivery if any `v1=` value matches.",
+        "schema": {
+          "type": "string",
+          "example": "t=1791493920,v1=5f1410b3599929147ad7559ca8423d05b723079614d80aa9763d17b440a899e3"
+        }
+      },
+      "MidwaterEvent": {
+        "name": "Midwater-Event",
+        "in": "header",
+        "required": true,
+        "description": "The event type, the same as the body's `type`.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "MidwaterDelivery": {
+        "name": "Midwater-Delivery",
+        "in": "header",
+        "required": true,
+        "description": "The delivery ID; the same on every retry of one delivery. Deduplicate on it.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "headers": {
+      "IdempotentReplayed": {
+        "description": "`true` when this response is a replay of an earlier request with the same `Idempotency-Key`.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "true"
+          ]
+        }
+      },
+      "RequestId": {
+        "description": "The request's ID, also in error bodies as `error.request_id`. Quote it when contacting support.",
+        "x-status": "planned",
+        "schema": {
+          "type": "string",
+          "example": "req_8Jx2kQ4mT9"
+        }
+      },
+      "Allow": {
+        "description": "The methods the path supports, e.g. `POST`.",
+        "x-status": "planned",
+        "schema": {
+          "type": "string",
+          "example": "POST"
+        }
+      },
+      "RetryAfter": {
+        "description": "Seconds to wait before retrying.",
+        "x-status": "planned",
+        "schema": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "RateLimitLimit": {
+        "description": "Requests allowed in the current window. The numbers are published when the limits are set.",
+        "x-status": "planned",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "RateLimitRemaining": {
+        "description": "Requests left in the current window.",
+        "x-status": "planned",
+        "schema": {
+          "type": "integer"
+        }
+      },
+      "RateLimitReset": {
+        "description": "Seconds until the window resets.",
+        "x-status": "planned",
+        "schema": {
+          "type": "integer"
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing, malformed, unknown or revoked API key.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "type": "authentication_error",
+                "message": "Missing or invalid API key. Use Authorization: Bearer mw_test_… or mw_live_…"
+              }
+            }
+          }
+        }
+      },
+      "PermissionDenied": {
+        "description": "The key is valid but not allowed to do this.",
+        "x-status": "planned",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "type": "permission_denied",
+                "message": "This key can't do that",
+                "request_id": "req_8Jx2kQ4mT9"
+              }
+            }
+          }
+        }
+      },
+      "InvalidJson": {
+        "description": "The body isn't valid JSON.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "type": "invalid_json",
+                "message": "Body must be valid JSON"
+              }
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "The body is JSON but doesn't match the schema. `fields` maps each dotted path to its messages.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "type": "validation_error",
+                "message": "The conversation payload is invalid",
+                "fields": {
+                  "channel": [
+                    "Invalid enum value. Expected 'voice' | 'chat', received 'fax'"
+                  ],
+                  "transcript": [
+                    "transcript needs at least one turn"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Not found in the key's environment.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "type": "not_found",
+                "message": "Conversation not found"
+              }
+            }
+          }
+        }
+      },
+      "IdempotencyConflict": {
+        "description": "The `Idempotency-Key` was already used with a different body.",
+        "x-status": "planned",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "type": "idempotency_conflict",
+                "message": "This Idempotency-Key was used with a different body",
+                "request_id": "req_8Jx2kQ4mT9"
+              }
+            }
+          }
+        }
+      },
+      "PayloadTooLarge": {
+        "description": "The body is larger than the limit. The limit is published when it's set.",
+        "x-status": "planned",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "type": "payload_too_large",
+                "message": "The request body is too large",
+                "request_id": "req_8Jx2kQ4mT9"
+              }
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Too many requests. Wait `Retry-After` seconds. The limits are published when they're set.",
+        "x-status": "planned",
+        "headers": {
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          },
+          "RateLimit-Limit": {
+            "$ref": "#/components/headers/RateLimitLimit"
+          },
+          "RateLimit-Remaining": {
+            "$ref": "#/components/headers/RateLimitRemaining"
+          },
+          "RateLimit-Reset": {
+            "$ref": "#/components/headers/RateLimitReset"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "type": "rate_limited",
+                "message": "Too many requests",
+                "request_id": "req_8Jx2kQ4mT9"
+              }
+            }
+          }
+        }
+      },
+      "ServerError": {
+        "description": "Something went wrong on Midwater's side. Safe to retry with the same `Idempotency-Key`.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "type": "server_error",
+                "message": "Something went wrong on our side"
+              }
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Midwater is briefly unavailable. Retry with backoff, honouring `Retry-After` when present.",
+        "x-status": "planned",
+        "headers": {
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "type": "service_unavailable",
+                "message": "Midwater is briefly unavailable",
+                "request_id": "req_8Jx2kQ4mT9"
+              }
+            }
+          }
+        }
+      },
+      "MethodNotAllowed": {
+        "description": "The path exists but doesn't support this method. `Allow` lists the methods it does support.",
+        "x-status": "planned",
+        "headers": {
+          "Allow": {
+            "$ref": "#/components/headers/Allow"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            },
+            "example": {
+              "error": {
+                "type": "method_not_allowed",
+                "message": "GET isn't supported here; use POST",
+                "request_id": "req_8Jx2kQ4mT9"
+              }
+            }
+          }
+        }
+      }
+    },
+    "examples": {
+      "ConversationCreate": {
+        "summary": "A finished voice call",
+        "value": {
+          "external_id": "call_8f2a91",
+          "channel": "voice",
+          "started_at": "2026-10-05T14:02:11Z",
+          "ended_at": "2026-10-05T14:06:40Z",
+          "ended_by": "caller",
+          "agent": {
+            "id": "front-desk",
+            "name": "Front desk",
+            "version": "1.0.0"
+          },
+          "transcript": [
+            {
+              "speaker": "agent",
+              "text": "Thanks for calling, this call may be recorded. How can I help?",
+              "start_ms": 0,
+              "end_ms": 2400
+            },
+            {
+              "speaker": "user",
+              "text": "I need to move my appointment to Thursday.",
+              "start_ms": 2900,
+              "end_ms": 5100,
+              "asr_confidence": 0.93
+            },
+            {
+              "speaker": "agent",
+              "text": "Sure, I have Thursday at 10 AM. Does that work?",
+              "start_ms": 5600,
+              "end_ms": 8200
+            },
+            {
+              "speaker": "user",
+              "text": "Yes, that is perfect.",
+              "start_ms": 8700,
+              "end_ms": 9900,
+              "asr_confidence": 0.96
+            },
+            {
+              "speaker": "agent",
+              "text": "Great, you are all set for Thursday at 10 AM.",
+              "start_ms": 61500,
+              "end_ms": 64000
+            }
+          ],
+          "events": [
+            {
+              "type": "tool_call",
+              "name": "reschedule_appointment",
+              "status": "success",
+              "at_ms": 61000
+            }
+          ],
+          "metadata": {
+            "language": "en"
+          }
+        }
+      },
+      "Conversation": {
+        "summary": "A scored conversation",
+        "value": {
+          "id": "cmv0187nm005po3016rag4dcg",
+          "external_id": "call_8f2a91",
+          "channel": "voice",
+          "status": "done",
+          "outcome": "resolved",
+          "dashboard_url": "https://app.example/conversations/cmv0187nm005po3016rag4dcg",
+          "started_at": "2026-10-05T14:02:11.000Z",
+          "ended_at": "2026-10-05T14:06:40.000Z",
+          "ended_by": "caller",
+          "agent": {
+            "id": "front-desk",
+            "name": "Front desk",
+            "version": "1.0.0"
+          },
+          "group": null,
+          "transcript": [
+            {
+              "speaker": "agent",
+              "text": "Thanks for calling, this call may be recorded. How can I help?"
+            },
+            {
+              "speaker": "user",
+              "text": "I need to move my appointment to Thursday.",
+              "asr_confidence": 0.93
+            }
+          ],
+          "events": [
+            {
+              "type": "tool_call",
+              "name": "reschedule_appointment",
+              "status": "success",
+              "at_ms": 61000
+            }
+          ],
+          "metadata": {
+            "language": "en"
+          },
+          "results": [
+            {
+              "check_key": "appointment_not_completed",
+              "check_name": "Appointment request not completed",
+              "check_version": 1,
+              "check_status": "active",
+              "score": 0,
+              "verdict": "pass",
+              "choice": null,
+              "decided_by": "rule",
+              "reason": "A booking tool call succeeded.",
+              "evidence_turns": [],
+              "scorer_version": "2026-10-01.1",
+              "latency_ms": 0
+            }
+          ]
+        }
+      },
+      "AgentHealth": {
+        "summary": "An agent on Watch",
+        "value": {
+          "agent_id": "front-desk",
+          "name": "Front desk",
+          "environment": "live",
+          "health_status": "watch",
+          "reason": "Resolution 81% vs 87% 30-day baseline (−6 pts) since version 3.2.0",
+          "group": {
+            "id": "brightsmile-dental",
+            "name": "BrightSmile Dental"
+          },
+          "last_7_days": {
+            "conversations": 212,
+            "with_outcome": 180,
+            "resolution_rate": 0.81,
+            "handed_to_person_rate": 0.09,
+            "requests_for_person_not_honored": 2,
+            "avg_frustration": 0.22,
+            "compliance_failures": 0
+          },
+          "last_30_days": {
+            "conversations": 905,
+            "with_outcome": 774,
+            "resolution_rate": 0.87,
+            "handed_to_person_rate": 0.08,
+            "requests_for_person_not_honored": 5,
+            "avg_frustration": 0.19,
+            "compliance_failures": 1
+          }
+        }
+      },
+      "GroupHealth": {
+        "summary": "A group set by its worst agent",
+        "value": {
+          "group_id": "brightsmile-dental",
+          "name": "BrightSmile Dental",
+          "environment": "live",
+          "health_status": "watch",
+          "reason": "Front desk: resolution 81% vs 87% 30-day baseline (−6 pts) since version 3.2.0",
+          "agents": [
+            {
+              "id": "front-desk",
+              "name": "Front desk",
+              "health_status": "watch"
+            },
+            {
+              "id": "after-hours",
+              "name": "After hours",
+              "health_status": "healthy"
+            }
+          ],
+          "last_7_days": {
+            "conversations": 301,
+            "with_outcome": 255,
+            "resolution_rate": 0.83,
+            "handed_to_person_rate": 0.08,
+            "requests_for_person_not_honored": 2,
+            "avg_frustration": 0.21,
+            "compliance_failures": 0
+          },
+          "last_30_days": {
+            "conversations": 1270,
+            "with_outcome": 1088,
+            "resolution_rate": 0.87,
+            "handed_to_person_rate": 0.08,
+            "requests_for_person_not_honored": 6,
+            "avg_frustration": 0.19,
+            "compliance_failures": 1
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": [
+              "type",
+              "message"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Stable machine-readable type. Each has a set status: `invalid_json` 400, `authentication_error` 401,\n`permission_denied` 403, `not_found` 404, `method_not_allowed` 405, `idempotency_conflict` 409, `payload_too_large` 413,\n`validation_error` 422, `rate_limited` 429, `server_error` 500, `service_unavailable` 503.\nTypes not yet returned are planned. Treat a type you don't know by its status class.\n",
+                "enum": [
+                  "invalid_json",
+                  "authentication_error",
+                  "permission_denied",
+                  "not_found",
+                  "method_not_allowed",
+                  "idempotency_conflict",
+                  "payload_too_large",
+                  "validation_error",
+                  "rate_limited",
+                  "server_error",
+                  "service_unavailable"
+                ],
+                "x-planned-values": [
+                  "permission_denied",
+                  "method_not_allowed",
+                  "idempotency_conflict",
+                  "payload_too_large",
+                  "rate_limited",
+                  "service_unavailable"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable; may change."
+              },
+              "fields": {
+                "type": "object",
+                "description": "Validation errors by dotted path, e.g. `transcript.0.speaker`. `_root` for the body as a whole.",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "request_id": {
+                "type": "string",
+                "x-status": "planned",
+                "description": "The request's ID, the same as the `Midwater-Request-Id` header."
+              }
+            }
+          }
+        }
+      },
+      "SafeId": {
+        "type": "string",
+        "description": "A letter or digit, then up to 127 letters, digits, `.`, `_`, `:` or `-`. No `/`, so IDs never need URL-encoding.",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+        "examples": [
+          "front-desk",
+          "brightsmile-dental:receptionist-v3"
+        ]
+      },
+      "Speaker": {
+        "type": "string",
+        "enum": [
+          "agent",
+          "user",
+          "human_agent"
+        ],
+        "description": "`agent` is your AI agent, `user` the caller or chat user, `human_agent` a person who took over."
+      },
+      "Turn": {
+        "type": "object",
+        "required": [
+          "speaker",
+          "text"
+        ],
+        "properties": {
+          "speaker": {
+            "$ref": "#/components/schemas/Speaker"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "start_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Offset from the start of the conversation."
+          },
+          "end_ms": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "asr_confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Speech-recognition confidence for this turn (voice)."
+          }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "description": "Something your agent did: a tool call, a transfer, a handoff. Extra properties are kept. The built-in booking checks turn on the first time a `tool_call` whose `name` contains `book` or `schedul` arrives. A `transfer` or `handoff` event marks the conversation as handed to a person.",
+        "additionalProperties": true,
+        "properties": {
+          "type": {
+            "type": "string",
+            "minLength": 1,
+            "examples": [
+              "tool_call",
+              "transfer",
+              "handoff"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "examples": [
+              "success",
+              "error"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "description": "Where a transfer went."
+          },
+          "at_ms": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "AgentRef": {
+        "type": "object",
+        "description": "The AI agent that handled the conversation. Omit it to use the project's Default agent.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/SafeId"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Shown in Midwater; used when the agent is first created."
+          },
+          "version": {
+            "type": "string",
+            "maxLength": 60,
+            "description": "Your agent's release, e.g. `3.2.0`. Releases are marked on the agent's trend."
+          }
+        }
+      },
+      "GroupRef": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "description": "Files the agent into this group (created if needed) the first time the agent is seen without one. Ignored once someone places the agent in the app.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/SafeId"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      },
+      "ConversationCreate": {
+        "type": "object",
+        "required": [
+          "external_id",
+          "channel",
+          "transcript"
+        ],
+        "properties": {
+          "external_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Your ID for this call or chat. Unique per environment."
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "voice",
+              "chat"
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ended_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Defaults to the time Midwater received it."
+          },
+          "ended_by": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "caller",
+              "user",
+              "human_agent",
+              "timeout",
+              "system"
+            ],
+            "description": "Who ended the conversation. `timeout` is valid for chat only."
+          },
+          "agent": {
+            "$ref": "#/components/schemas/AgentRef"
+          },
+          "group": {
+            "$ref": "#/components/schemas/GroupRef"
+          },
+          "transcript": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/Turn"
+            },
+            "description": "Every turn, in order."
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Anything else you want kept with the conversation."
+          }
+        }
+      },
+      "ConversationStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "evaluating",
+          "done",
+          "failed"
+        ],
+        "description": "Scoring status. `failed` means scoring didn't finish after Midwater's automatic retries (five attempts in all); it can be re-run from the app."
+      },
+      "ConversationAccepted": {
+        "type": "object",
+        "required": [
+          "id",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Midwater's conversation ID."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConversationStatus"
+          },
+          "duplicate": {
+            "type": "boolean",
+            "description": "Present and `true` when the `external_id` already existed."
+          }
+        }
+      },
+      "Outcome": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "resolved",
+          "unresolved",
+          "escalated",
+          "not_real_inquiry",
+          "handed_to_person",
+          "not_customer_call",
+          null
+        ],
+        "x-planned-values": [
+          "handed_to_person",
+          "not_customer_call"
+        ],
+        "description": "How the conversation ended for the caller. `resolved`: Resolved. `unresolved`: Unresolved.\n`escalated`: Handed to a person. `not_real_inquiry`: Not a customer call (sales, spam, wrong number),\nkept out of resolution rates. `null` while scoring, or when no outcome check applied.\nPlanned renames: `escalated` becomes `handed_to_person` and `not_real_inquiry` becomes `not_customer_call`;\naccept both until the change is announced in the changelog.\n"
+      },
+      "CheckResultValue": {
+        "type": "string",
+        "enum": [
+          "pass",
+          "fail",
+          "uncertain",
+          "not_applicable",
+          "met",
+          "not_met"
+        ],
+        "description": "`pass`: no problem found. `fail`: Midwater found this problem. `uncertain`: unclear; a person should look.\n`not_applicable`: didn't apply to this conversation. `met` / `not_met`: for gating questions\n(for example, whether this was a real customer inquiry).\n"
+      },
+      "DecidedBy": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "enum": [
+          "rule",
+          "model",
+          "llm_judge",
+          "second_review",
+          "human",
+          null
+        ],
+        "x-planned-values": [
+          "second_review"
+        ],
+        "description": "`rule`: decided from the events you sent. `model`: Midwater's model read the whole conversation. `llm_judge`: a second review for unclear conversations (planned rename: `second_review`; accept both). `human`: someone on your team."
+      },
+      "CheckResult": {
+        "type": "object",
+        "required": [
+          "check_key",
+          "check_version",
+          "check_status",
+          "verdict",
+          "scorer_version"
+        ],
+        "properties": {
+          "check_key": {
+            "type": "string",
+            "description": "Stable key of the check; use it with the feedback endpoint."
+          },
+          "check_name": {
+            "type": "string"
+          },
+          "check_version": {
+            "type": "integer"
+          },
+          "check_status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "shadow",
+              "active"
+            ],
+            "description": "`shadow` checks are scored but never alert."
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Likelihood that the problem occurred, 0 to 1."
+          },
+          "verdict": {
+            "$ref": "#/components/schemas/CheckResultValue"
+          },
+          "choice": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The chosen option for multiple-choice checks."
+          },
+          "decided_by": {
+            "$ref": "#/components/schemas/DecidedBy"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One or two sentences on why."
+          },
+          "evidence_turns": {
+            "type": "array",
+            "items": {},
+            "description": "The transcript turns the result points to."
+          },
+          "scorer_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Midwater's opaque version of how the result was scored, e.g. `2026-10-06.3`. `null` when nothing scored the result (a check that didn't apply, or wasn't evaluated)."
+          },
+          "latency_ms": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "Conversation": {
+        "type": "object",
+        "required": [
+          "id",
+          "external_id",
+          "channel",
+          "status",
+          "outcome",
+          "dashboard_url",
+          "agent",
+          "group",
+          "transcript",
+          "events",
+          "metadata",
+          "results"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "voice",
+              "chat"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConversationStatus"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "dashboard_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The conversation in the Midwater app."
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "ended_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "ended_by": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agent": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "version"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "group": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "transcript": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Turn"
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CheckResult"
+            }
+          }
+        }
+      },
+      "FeedbackCreate": {
+        "type": "object",
+        "required": [
+          "check_key",
+          "verdict"
+        ],
+        "properties": {
+          "check_key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail"
+            ],
+            "description": "Your team's answer: `pass` (no problem) or `fail` (the problem happened)."
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        }
+      },
+      "Feedback": {
+        "type": "object",
+        "required": [
+          "id",
+          "check_key",
+          "verdict",
+          "source"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "check_key": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "pass",
+              "fail"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "const": "api"
+          }
+        }
+      },
+      "HealthStatus": {
+        "type": "string",
+        "enum": [
+          "healthy",
+          "watch",
+          "at_risk",
+          "not_enough_calls"
+        ],
+        "description": "`not_enough_calls`: fewer than 5 calls with an outcome in the last 7 days, so nothing is measured yet, unless a high-severity compliance failure puts the agent in `watch` (1) or `at_risk` (2 or more)."
+      },
+      "HealthWindow": {
+        "type": "object",
+        "required": [
+          "conversations",
+          "with_outcome",
+          "resolution_rate",
+          "handed_to_person_rate",
+          "requests_for_person_not_honored",
+          "avg_frustration",
+          "compliance_failures"
+        ],
+        "properties": {
+          "conversations": {
+            "type": "integer",
+            "description": "Conversations received in the window."
+          },
+          "with_outcome": {
+            "type": "integer",
+            "description": "Conversations with an outcome (customer calls that were scored)."
+          },
+          "resolution_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Share of conversations with an outcome that were resolved."
+          },
+          "handed_to_person_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Share handed to a person (a transfer, or a person requested and provided)."
+          },
+          "requests_for_person_not_honored": {
+            "type": "integer",
+            "description": "Conversations where the caller asked for a person and didn't get one."
+          },
+          "avg_frustration": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Average caller frustration, 0 (calm) to 1 (very frustrated)."
+          },
+          "compliance_failures": {
+            "type": "integer",
+            "description": "Compliance checks that failed in the window."
+          }
+        }
+      },
+      "AgentHealth": {
+        "type": "object",
+        "required": [
+          "agent_id",
+          "name",
+          "environment",
+          "health_status",
+          "reason",
+          "group",
+          "last_7_days",
+          "last_30_days"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "test",
+              "live"
+            ],
+            "description": "The key's environment; health is measured per environment."
+          },
+          "health_status": {
+            "$ref": "#/components/schemas/HealthStatus"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why, in one sentence, e.g. \"Needs 4 more calls with an outcome this week\"."
+          },
+          "group": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "last_7_days": {
+            "$ref": "#/components/schemas/HealthWindow"
+          },
+          "last_30_days": {
+            "$ref": "#/components/schemas/HealthWindow"
+          }
+        }
+      },
+      "GroupHealth": {
+        "type": "object",
+        "required": [
+          "group_id",
+          "name",
+          "environment",
+          "health_status",
+          "reason",
+          "agents",
+          "last_7_days",
+          "last_30_days"
+        ],
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "test",
+              "live"
+            ]
+          },
+          "health_status": {
+            "$ref": "#/components/schemas/HealthStatus"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Watch and at risk name the agent that set the status."
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "health_status"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "health_status": {
+                  "$ref": "#/components/schemas/HealthStatus"
+                }
+              }
+            }
+          },
+          "last_7_days": {
+            "$ref": "#/components/schemas/HealthWindow"
+          },
+          "last_30_days": {
+            "$ref": "#/components/schemas/HealthWindow"
+          }
+        }
+      },
+      "WebhookEnvelope": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "environment",
+          "created_at",
+          "data"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Event ID, `evt_…`."
+          },
+          "type": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string",
+            "enum": [
+              "test",
+              "live"
+            ],
+            "description": "Webhooks fire for live conversations, and for test ones only when the destination or route opts in."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "data": {
+            "type": "object"
+          }
+        }
+      },
+      "WebhookAgent": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "health_status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "health_status": {
+            "$ref": "#/components/schemas/HealthStatus"
+          }
+        }
+      },
+      "WebhookGroup": {
+        "type": "object",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ConversationEvaluatedData": {
+        "type": "object",
+        "required": [
+          "conversation_id",
+          "external_id",
+          "agent",
+          "outcome",
+          "results"
+        ],
+        "properties": {
+          "conversation_id": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "agent": {
+            "$ref": "#/components/schemas/WebhookAgent"
+          },
+          "group": {
+            "$ref": "#/components/schemas/WebhookGroup"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/Outcome"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "check_key",
+                "verdict",
+                "score",
+                "decided_by",
+                "shadow"
+              ],
+              "properties": {
+                "check_key": {
+                  "type": "string"
+                },
+                "verdict": {
+                  "$ref": "#/components/schemas/CheckResultValue"
+                },
+                "score": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "decided_by": {
+                  "$ref": "#/components/schemas/DecidedBy"
+                },
+                "shadow": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "CheckFailedData": {
+        "type": "object",
+        "required": [
+          "conversation",
+          "agent",
+          "check",
+          "result",
+          "url"
+        ],
+        "properties": {
+          "conversation": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "external_id": {
+                "type": "string"
+              },
+              "channel": {
+                "type": "string",
+                "enum": [
+                  "voice",
+                  "chat"
+                ]
+              },
+              "agent_version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "ended_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          "agent": {
+            "$ref": "#/components/schemas/WebhookAgent"
+          },
+          "group": {
+            "$ref": "#/components/schemas/WebhookGroup"
+          },
+          "check": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "severity": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              "version": {
+                "type": "integer"
+              }
+            }
+          },
+          "result": {
+            "type": "object",
+            "properties": {
+              "score": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "verdict": {
+                "$ref": "#/components/schemas/CheckResultValue"
+              },
+              "decided_by": {
+                "$ref": "#/components/schemas/DecidedBy"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "AgentHealthChangedData": {
+        "type": "object",
+        "required": [
+          "agent",
+          "from",
+          "to",
+          "last_7_days",
+          "last_30_days",
+          "url"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/WebhookAgent"
+          },
+          "group": {
+            "$ref": "#/components/schemas/WebhookGroup"
+          },
+          "from": {
+            "$ref": "#/components/schemas/HealthStatus"
+          },
+          "to": {
+            "$ref": "#/components/schemas/HealthStatus"
+          },
+          "last_7_days": {
+            "$ref": "#/components/schemas/HealthWindow"
+          },
+          "last_30_days": {
+            "$ref": "#/components/schemas/HealthWindow"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "GroupHealthChangedData": {
+        "type": "object",
+        "required": [
+          "group",
+          "from",
+          "to",
+          "agent",
+          "last_7_days",
+          "last_30_days",
+          "url"
+        ],
+        "properties": {
+          "group": {
+            "$ref": "#/components/schemas/WebhookGroup"
+          },
+          "from": {
+            "$ref": "#/components/schemas/HealthStatus"
+          },
+          "to": {
+            "$ref": "#/components/schemas/HealthStatus"
+          },
+          "agent": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The agent whose status set the group's.",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "last_7_days": {
+            "$ref": "#/components/schemas/HealthWindow"
+          },
+          "last_30_days": {
+            "$ref": "#/components/schemas/HealthWindow"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    }
+  }
+}

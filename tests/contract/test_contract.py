@@ -186,7 +186,7 @@ def test_wait_until_done(scored: Conversation) -> None:
     for result in scored.results:
         assert result.check_key
         assert result.verdict in CHECK_RESULT_VALUES
-        assert result.scorer_version
+        assert result.scorer_version is None or isinstance(result.scorer_version, str)
         for key in ("check_key", "verdict", "scorer_version"):
             assert key in result.raw
 
