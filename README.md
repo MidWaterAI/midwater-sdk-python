@@ -23,12 +23,12 @@ pip install midwater
 
 ## Quickstart
 
-Set your API key and the base URL for your Midwater environment. Both are required; there is
-no default host.
+Set your API key and the base URL. Both are required: the base URL is `https://api.midwater.ai`,
+and the SDK doesn't assume it yet.
 
 ```bash
 export MIDWATER_API_KEY=mw_test_...
-export MIDWATER_BASE_URL="<the base URL for your Midwater environment>"
+export MIDWATER_BASE_URL=https://api.midwater.ai
 ```
 
 ```python
@@ -320,7 +320,7 @@ client = Midwater(
 )
 ```
 
-`base_url` is the base URL for your Midwater environment. There is no default host: without
+`base_url` is the API base URL, `https://api.midwater.ai`. The SDK doesn't assume it yet: without
 `base_url` or `MIDWATER_BASE_URL` the client raises `MidwaterError`. If you pass `http_client`,
 its own timeout applies and the SDK won't close it.
 
@@ -345,8 +345,9 @@ sha256sum -c fixtures/SHA256SUMS  # macOS: shasum -a 256 -c fixtures/SHA256SUMS
 ```
 
 Contract tests read `MIDWATER_API_KEY` and `MIDWATER_BASE_URL` from the environment only, and
-are skipped when either is unset. They only run against `localhost`. The API contract lives in
-`openapi/midwater.yaml`.
+are skipped when either is unset. They only run against `localhost`. `openapi/midwater.json` is a
+pinned copy of the app's API spec: `openapi/midwater.json.sha256` records its checksum and
+`openapi/SOURCE` the app commit it came from.
 
 ### Shared fixtures
 
@@ -355,9 +356,9 @@ are skipped when either is unset. They only run against `localhost`. The API con
 `feedback.json`, `agent-health.json`, `group-health.json`), every error type with its status
 (`errors.json`) and the webhook signature vectors (`webhook-vectors.json`). The unit tests mock
 the API with these files. They are generated in another repository and copied in unchanged;
-don't edit them here. `fixtures/SHA256SUMS` pins their checksums and the checksum of
-`openapi/midwater.yaml`: CI runs `sha256sum -c fixtures/SHA256SUMS`, and `tests/test_pins.py`
-fails if any pinned file drifts.
+don't edit them here. `fixtures/SHA256SUMS` pins their checksums and the spec's: CI runs
+`sha256sum -c openapi/midwater.json.sha256 fixtures/SHA256SUMS`, and `tests/test_pins.py` fails if
+any pinned file drifts. `scripts/pin-openapi.sh <app-commit>` in `midwater-docs` updates all of it.
 
 ## Releasing
 

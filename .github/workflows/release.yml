@@ -32,7 +32,7 @@ jobs:
         run: |
           v="$(python -c 'import midwater; print(midwater.__version__)')"
           test "${GITHUB_REF_NAME}" = "v${v}" || { echo "Tag ${GITHUB_REF_NAME} doesn't match the package version ${v} (src/midwater/_version.py, read by pyproject.toml)"; exit 1; }
-      - run: sha256sum -c fixtures/SHA256SUMS
+      - run: sha256sum -c openapi/midwater.json.sha256 fixtures/SHA256SUMS
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy --strict src
