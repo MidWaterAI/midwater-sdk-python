@@ -4,6 +4,12 @@
   "channel": "voice",
   "status": "done",
   "outcome": "resolved",
+  "coverage": {
+    "complete": true,
+    "skipped_turns": 0,
+    "skipped_from": null,
+    "skipped_to": null
+  },
   "dashboard_url": "https://app.example/conversations/cmv0187nm005po3016rag4dcg",
   "started_at": "2026-10-05T14:02:11.000Z",
   "ended_at": "2026-10-05T14:06:40.000Z",

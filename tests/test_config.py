@@ -181,3 +181,34 @@ def test_scorer_version_may_be_null() -> None:
     raw = fixture("conversation.json")["results"][0]
     assert CheckResult.from_dict({**raw, "scorer_version": None}).scorer_version is None
     assert CheckResult.from_dict(raw).scorer_version == raw["scorer_version"]
+
+
+def test_coverage_complete_partial_and_absent() -> None:
+    """API 1.1.0: coverage says how much of the transcript was read."""
+    from midwater import Coverage
+    from midwater.types import Conversation
+
+    raw = fixture("conversation.json")
+    conv = Conversation.from_dict(raw)
+    assert conv.coverage == Coverage(
+        complete=True, skipped_turns=0, skipped_from=None, skipped_to=None
+    )
+
+    partial = {
+        "complete": False,
+        "skipped_turns": 42,
+        "skipped_from": 1800000,
+        "skipped_to": 4200000,
+    }
+    conv = Conversation.from_dict({**raw, "coverage": partial})
+    assert conv.coverage == Coverage(
+        complete=False, skipped_turns=42, skipped_from=1800000, skipped_to=4200000
+    )
+
+    untimed = {"complete": False, "skipped_turns": 7, "skipped_from": None, "skipped_to": None}
+    assert Conversation.from_dict({**raw, "coverage": untimed}).coverage == Coverage(
+        complete=False, skipped_turns=7
+    )
+
+    older = {k: v for k, v in raw.items() if k != "coverage"}
+    assert Conversation.from_dict(older).coverage is None

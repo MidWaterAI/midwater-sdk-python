@@ -36,6 +36,7 @@ __all__ = [
     "ConversationAgent",
     "GroupSummary",
     "CheckResult",
+    "Coverage",
     "Conversation",
     "Feedback",
     "HealthWindow",
@@ -270,6 +271,33 @@ class CheckResult:
 
 
 @dataclass
+class Coverage:
+    """How much of the transcript Midwater read.
+
+    A very long call can be read in part: one stretch from the middle is skipped and the opening
+    and ending are kept, so checks answered from it may be incomplete. ``complete`` is ``True``
+    when every turn was read. ``skipped_from`` / ``skipped_to`` are milliseconds from the start of
+    the call (``None`` when complete, or when the turns have no times).
+    """
+
+    complete: bool
+    skipped_turns: int = 0
+    skipped_from: Optional[int] = None
+    skipped_to: Optional[int] = None
+
+    @classmethod
+    def from_optional(cls, data: Optional[Mapping[str, Any]]) -> Optional[Coverage]:
+        if not data:
+            return None
+        return cls(
+            complete=bool(data.get("complete", True)),
+            skipped_turns=int(data.get("skipped_turns") or 0),
+            skipped_from=_opt_int(data.get("skipped_from")),
+            skipped_to=_opt_int(data.get("skipped_to")),
+        )
+
+
+@dataclass
 class Conversation:
     """A conversation, its scoring ``status``, its ``outcome`` and every check result.
 
@@ -291,6 +319,8 @@ class Conversation:
     started_at: Optional[str] = None
     ended_at: Optional[str] = None
     ended_by: Optional[str] = None
+    # How much of the transcript was read (API 1.1.0). None from a server that doesn't send it.
+    coverage: Optional[Coverage] = None
     raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
     request_id: Optional[str] = field(default=None, compare=False)
 
@@ -312,6 +342,7 @@ class Conversation:
             started_at=_opt_str(data.get("started_at")),
             ended_at=_opt_str(data.get("ended_at")),
             ended_by=_opt_str(data.get("ended_by")),
+            coverage=Coverage.from_optional(data.get("coverage")),
             raw=dict(data),
         )
 
@@ -448,7 +479,8 @@ class WebhookEvent(TypedDict):
 
     ``type`` is one of ``conversation.evaluated``, ``check.failed``, ``check.failed.digest``,
     ``agent.health_changed``, ``group.health_changed`` or ``test``; ``data`` depends on it
-    (see the OpenAPI document in this repository).
+    (see the OpenAPI document in this repository). ``conversation.evaluated`` data carries
+    ``coverage`` (see :class:`Coverage`) as a plain dict.
     """
 
     id: str

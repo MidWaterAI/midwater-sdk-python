@@ -348,6 +348,9 @@ Contract tests read `MIDWATER_API_KEY` and `MIDWATER_BASE_URL` from the environm
 are skipped when either is unset. They only run against `localhost`. `openapi/midwater.json` is a
 pinned copy of the app's API spec: `openapi/midwater.json.sha256` records its checksum and
 `openapi/SOURCE` the app commit it came from.
+The throwaway workspace and test key come from the Midwater team's end-to-end runner, which
+records every throwaway account before it's created and revokes the key afterwards. Never use a
+customer's key.
 
 ### Shared fixtures
 
