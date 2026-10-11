@@ -118,9 +118,9 @@ print(feedback.source)  # "api"
 ```
 
 Like every POST, feedback carries an `Idempotency-Key` (a generated UUID4, or pass your own
-with `idempotency_key=`). The SDK never retries feedback, not even after a `429` or a
-connection error: until the server de-duplicates feedback by that key (planned), a retry could
-store the same label twice.
+with `idempotency_key=`), and the API honours it (API 1.2.0): the SDK retries feedback like
+`create`, with the same key, so a retry never stores the label twice. `feedback.replayed` is
+`True` when the answer is a replay of an earlier request with the same key.
 
 ## Agent and group health
 
@@ -210,7 +210,7 @@ All errors derive from `midwater.MidwaterError`.
 | `NotFoundError` | HTTP 404 | `not_found` |
 | `MethodNotAllowedError` | HTTP 405 (planned as JSON, with an `Allow` header) | `method_not_allowed` |
 | `RequestTimeoutError` | HTTP 408 (after retries) | |
-| `IdempotencyConflictError` | HTTP 409: the `Idempotency-Key` was used with a different body | `idempotency_conflict` |
+| `IdempotencyConflictError` | HTTP 409: the `Idempotency-Key` was already used for a different request | `idempotency_conflict` |
 | `PayloadTooLargeError` | HTTP 413 | `payload_too_large` |
 | `RateLimitError` | HTTP 429 (after retries) | `rate_limited` |
 | `ServiceUnavailableError` | HTTP 503 (after retries); a `ServerError` | `service_unavailable` |
@@ -250,8 +250,8 @@ DEBUG logging for the SDK, `httpx` and `httpcore` and checks).
 The SDK retries HTTP 408, 429, every 5xx, and network errors (connection failures and
 timeouts), **only on calls that are safe to repeat**: the GETs (`conversations.get()`,
 `wait()`, `agents.health()`, `groups.health()`) and `conversations.create()`, which always
-carries an `Idempotency-Key`. `conversations.feedback()` is never retried (see
-[Feedback](#feedback)). Other 4xx answers are never retried.
+carries an `Idempotency-Key`, and `conversations.feedback()`, which does too. Other 4xx
+answers are never retried.
 
 `max_retries` defaults to 2 and is capped at 3: a larger value is treated as 3. Retries use
 exponential backoff with jitter (0.5 s, 1 s, 2 s, capped at 8 s). A numeric `Retry-After`
@@ -260,9 +260,10 @@ header (seconds) is honoured, up to 60 s.
 Every POST carries an `Idempotency-Key`. **If you don't pass `idempotency_key`, the SDK
 generates one (a UUID4) for each call and reuses it across that call's retries.** A repeated
 key answers with the first response and `accepted.replayed` is `True`. The key used for a
-conversation is on `accepted.idempotency_key`. Two parts of this are planned on the server and
-not live yet: keys expiring after 24 hours, and answering `409 idempotency_conflict`
-(`IdempotencyConflictError`) when a key is reused with a different body.
+conversation is on `accepted.idempotency_key`. Keys are 255 characters or fewer and kept for
+24 hours per environment. Reusing a key for a different request (another endpoint or a
+different body) raises `IdempotencyConflictError` (`409 idempotency_conflict`); use a new key
+for a new request.
 
 To make retries safe across processes or restarts too, pass your own key, for example your
 `external_id`:

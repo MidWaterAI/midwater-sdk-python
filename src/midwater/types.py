@@ -355,16 +355,19 @@ class Feedback:
     check_key: str
     verdict: FeedbackValue
     source: str
+    # True when the answer is a replay of an earlier request with the same Idempotency-Key.
+    replayed: bool = False
     raw: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
     request_id: Optional[str] = field(default=None, compare=False)
 
     @classmethod
-    def from_dict(cls, data: Mapping[str, Any]) -> Feedback:
+    def from_dict(cls, data: Mapping[str, Any], *, replayed: bool = False) -> Feedback:
         return cls(
             id=str(data["id"]),
             check_key=str(data["check_key"]),
             verdict=data["verdict"],
             source=str(data.get("source", "")),
+            replayed=replayed,
             raw=dict(data),
         )
 

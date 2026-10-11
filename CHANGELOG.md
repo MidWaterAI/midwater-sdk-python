@@ -6,8 +6,17 @@ All notable changes to the `midwater` package are listed here. The format follow
 
 ## [Unreleased]
 
+Planned for 0.2.0, together with the value renames.
+
+### Added
+
+- `Conversation.coverage` (API 1.1.0): how much of the transcript was read.
+- `Feedback.replayed`.
+
 ### Changed
 
+- `conversations.feedback()` is retried like `create`, with the same `Idempotency-Key`: the API honours it since API 1.2.0.
+- `CheckResult.scorer_version` is `Optional[str]`; a `null` no longer becomes the string `"None"`.
 - Requires Python 3.10 or later (Python 3.9 reached end of life in October 2025). CI tests 3.10 and 3.13. 0.1.0 on PyPI still declares 3.9; the next release (0.1.1) carries the new floor.
 
 ## [0.1.0] - 2026-10-08
